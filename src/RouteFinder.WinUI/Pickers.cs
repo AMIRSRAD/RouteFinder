@@ -152,29 +152,53 @@ public sealed partial class MainWindow
         await Run("Finding running apps…", async () =>
             paths = await Task.Run(() => FindRunningApps(existing, expected, background)));
         if (exitRequested || closing || paths is null) return;
-        var list = new ListView { MaxHeight = 310, MinWidth = 290, SelectionMode = ListViewSelectionMode.Multiple };
-        foreach (var path in paths.OrderBy(Path.GetFileName, StringComparer.OrdinalIgnoreCase))
+        var list = CreateRunningAppList(paths, preselect: expected is not null);
+        if (paths.Length == 0)
         {
-            var item = new ListViewItem { Content = Path.GetFileNameWithoutExtension(path), Tag = path };
-            ToolTipService.SetToolTip(item, path);
-            list.Items.Add(item);
-        }
-        if (list.Items.Count == 0)
-        {
-            Report("No new running apps were found. You can browse for an executable instead.");
+            Report(expected is null ? "No new running apps were found. You can browse for an executable instead."
+                : "No matching executables were found. Start the game and any linked apps, or browse for their executable files.");
             return;
         }
-        var dialog = MakeDialog(background ? "Add background processes" : "Add running apps", list, "Add selected");
-        dialog.IsPrimaryButtonEnabled = false;
+        UIElement content = list;
+        if (expected is not null)
+        {
+            var missing = expected.Where(name => !paths.Any(path => ExecutableMatches(path, name))).ToArray();
+            var panel = new StackPanel { Spacing = 8 };
+            panel.Children.Add(list);
+            if (missing.Length > 0)
+                panel.Children.Add(new TextBlock
+                {
+                    Text = $"Could not find {string.Join(", ", missing)}. Start those apps or browse for their files.",
+                    TextWrapping = TextWrapping.Wrap, MaxWidth = 390
+                });
+            content = panel;
+        }
+        var dialog = MakeDialog(expected is not null ? "Select catalog executables" :
+            background ? "Add background processes" : "Add running apps", content, "Add selected");
+        dialog.IsPrimaryButtonEnabled = list.SelectedItems.Count > 0;
         list.SelectionChanged += (_, _) => dialog.IsPrimaryButtonEnabled = list.SelectedItems.Count > 0;
         if (await dialog.ShowAsync() != ContentDialogResult.Primary) return;
         AddApplications(list.SelectedItems.OfType<ListViewItem>().Select(item => (string)item.Tag));
     }
 
+    static ListView CreateRunningAppList(IEnumerable<string> paths, bool preselect)
+    {
+        var list = new ListView { MaxHeight = 310, MinWidth = 290, SelectionMode = ListViewSelectionMode.Multiple };
+        foreach (var path in paths.OrderBy(Path.GetFileName, StringComparer.OrdinalIgnoreCase))
+        {
+            var item = new ListViewItem { Content = Path.GetFileName(path), Tag = path };
+            ToolTipService.SetToolTip(item, path);
+            list.Items.Add(item);
+            if (preselect) list.SelectedItems.Add(item);
+        }
+        return list;
+    }
+
     static string[] FindRunningApps(HashSet<string> existing, string[]? expected, bool background)
     {
-        var names = expected?.Select(Path.GetFileNameWithoutExtension).ToHashSet(StringComparer.OrdinalIgnoreCase);
-        var paths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var names = expected?.Select(ExecutableStem).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var paths = names is null ? new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+            : existing.Where(path => names.Contains(ExecutableStem(path)) && File.Exists(path)).ToHashSet(StringComparer.OrdinalIgnoreCase);
         foreach (var process in Process.GetProcesses())
         {
             using (process)
@@ -184,7 +208,7 @@ public sealed partial class MainWindow
                     if (names is null ? (process.MainWindowHandle == IntPtr.Zero) != background : !names.Contains(process.ProcessName))
                         continue;
                     if (process.MainModule?.FileName is { } path && path.EndsWith(".exe", StringComparison.OrdinalIgnoreCase) &&
-                        (expected is null ? !existing.Contains(path) : expected.Any(name => ExecutableMatches(path, name))))
+                        (names is null ? !existing.Contains(path) : names.Contains(ExecutableStem(path))))
                         paths.Add(path);
                 }
                 catch (Exception error) when (error is System.ComponentModel.Win32Exception or InvalidOperationException or NotSupportedException) { }

@@ -341,7 +341,9 @@ public sealed partial class MainWindow : Window
             if (!session.TunnelIsActive)
             {
                 ResetTrafficHealth();
-                SetHealthAlert(reconnectFailed ? "Reconnect failed and the tunnel is still stopped." : "WireSock reported that the tunnel stopped.");
+                string stopped = reconnectFailed ? "Reconnect failed and the tunnel is still stopped." : "WireSock reported that the tunnel stopped.";
+                if (session.ActiveTunnelError is uint errorCode) stopped += $" Error 0x{errorCode:X8}.";
+                SetHealthAlert(stopped);
                 RenderTelemetry(null, null, 0, 0, null, "Tunnel stopped");
                 ConnectionTitle.Text = "Tunnel stopped";
                 ConnectionDetail.Text = "Disconnect before trying another route.";

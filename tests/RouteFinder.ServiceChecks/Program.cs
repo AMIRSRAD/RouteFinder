@@ -116,6 +116,12 @@ await Check("Read route details nested inside the WireGuard peer", () => Sync(()
     }));
     var session = EzConnectClient.ParseProvisionedSession(json.RootElement, route, privateKey);
     Assert(session.Profile.Endpoint == "192.0.2.1:3478" && session.Profile.GetPeer("AllowedIPs").Contains("::/0"), "Missing nested route settings");
+    Assert(ConnectionSession.RemoveUnusableServiceIpv6Routes(session.Profile) &&
+        session.Profile.GetPeer("AllowedIPs") == "0.0.0.0/0", "IPv4-only tunnel retained an IPv6 default route");
+    session.Profile.Interface["Address"] = "10.0.0.2/32,fd00::2/128";
+    session.Profile.Peer["AllowedIPs"] = "0.0.0.0/0,::/0";
+    Assert(!ConnectionSession.RemoveUnusableServiceIpv6Routes(session.Profile) &&
+        session.Profile.GetPeer("AllowedIPs") == "0.0.0.0/0,::/0", "Dual-stack profile lost IPv6 routing");
 }));
 await Check("Import EZConnect settings offline without a session ID", () => Sync(() =>
 {

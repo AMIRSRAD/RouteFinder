@@ -17,7 +17,13 @@ public sealed partial class MainWindow
         .Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
 
     static bool ExecutableMatches(string path, string name) =>
-        string.Equals(Path.GetFileName(path), Path.GetFileName(name), StringComparison.OrdinalIgnoreCase);
+        string.Equals(ExecutableStem(path), ExecutableStem(name), StringComparison.OrdinalIgnoreCase);
+
+    static string ExecutableStem(string path)
+    {
+        string name = Path.GetFileName(path);
+        return name.EndsWith(".exe", StringComparison.OrdinalIgnoreCase) ? name[..^4] : name;
+    }
 
     (string[] Ips, string[] Domains, string[] Conflicts) CatalogRouting(ServiceRoute? service, string[] paths)
     {
@@ -75,7 +81,7 @@ public sealed partial class MainWindow
     {
         var actions = new List<(string Label, Func<Task> Run)>();
         var includeLinked = new CheckBox { Content = "Include linked apps", IsChecked = preferences.AutoAddLinkedApps };
-        actions.Add(("Find running apps", async () =>
+        actions.Add(("Select matching executables", async () =>
         {
             preferences = preferences with { AutoAddLinkedApps = includeLinked.IsChecked == true };
             SavePreferences();

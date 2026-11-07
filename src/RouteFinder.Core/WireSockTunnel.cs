@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Text.RegularExpressions;
 
@@ -25,6 +26,7 @@ public sealed class WireSockTunnel : IDisposable
     private readonly NetworkLock setNetworkLock;
     private readonly SetGlobalOption setGlobalOption;
     private readonly GetStats getStats;
+    private readonly string? sdkFileVersion;
     private readonly List<(nint Pointer, int Bytes)> allocatedStrings = [];
     private bool created;
 
@@ -60,6 +62,7 @@ public sealed class WireSockTunnel : IDisposable
         if (!OperatingSystem.IsWindows() || !Environment.Is64BitProcess) throw new PlatformNotSupportedException("WireSock requires 64-bit Windows.");
         SdkPath = Path.GetFullPath(sdkPath ?? FindSdkPath());
         if (!File.Exists(SdkPath)) throw new FileNotFoundException("WireSock SDK DLL not found.", SdkPath);
+        sdkFileVersion = FileVersionInfo.GetVersionInfo(SdkPath).FileVersion;
         // Restrict dependency lookup to the DLL directory and standard trusted Windows directories.
         library = LoadLibraryEx(SdkPath, 0, 0x00000100 | 0x00001000);
         if (library == 0) throw new Win32Exception(Marshal.GetLastWin32Error(), "Could not load the WireSock SDK.");
@@ -123,6 +126,8 @@ public sealed class WireSockTunnel : IDisposable
         if (apps.Length > 0 && allApplications)
             throw new ArgumentException("All-applications routing cannot use a selected-app list.", nameof(applications));
         if (apps.Length > 0 && profile.GetInterface("DisallowedApps").Length > 0) throw new FormatException("This profile uses DisallowedApps. Remove that option to use selected-application routing.");
+        string allowedApps = FormatAllowedApps(apps, sdkFileVersion,
+            Environment.GetCommandLineArgs().Contains("--wiresock-comma-app-list"));
         lock (gate)
         {
             CheckDisposed();
@@ -159,7 +164,7 @@ public sealed class WireSockTunnel : IDisposable
                 var extra = new NativeExtra
                 {
                     Size = (nuint)Marshal.SizeOf<NativeExtra>(),
-                    AllowedApps = Wide(string.Join("|", apps)),
+                    AllowedApps = Wide(allowedApps),
                     DisallowedApps = Wide(profile.GetInterface("DisallowedApps")),
                     IgnoredIps = Utf8(ignored),
                     Proxy = I("Socks5Proxy"), Username = I("Socks5ProxyUsername"), Password = I("Socks5ProxyPassword"), AllTraffic = I("Socks5ProxyAllTraffic")
@@ -259,6 +264,16 @@ public sealed class WireSockTunnel : IDisposable
     }
 
     private T Bind<T>(string name) where T : Delegate => Marshal.GetDelegateForFunctionPointer<T>(NativeLibrary.GetExport(library, name));
+
+    private static string FormatAllowedApps(string[] apps, string? fileVersion, bool forceComma)
+    {
+        // Both create_tunnel_ex exports in 3.4.8.1 split the list on commas despite the SDK guide.
+        bool commaSeparated = fileVersion == "3.4.8.1" || forceComma;
+        if (commaSeparated && apps.Any(path => path.Contains(',')))
+            throw new ArgumentException("This WireSock app list cannot represent executable paths containing commas.", nameof(apps));
+        return string.Join(commaSeparated ? ',' : '|', apps);
+    }
+
     private nint Utf8(string value)
     {
         if (value.Length == 0) return 0;
@@ -268,7 +283,14 @@ public sealed class WireSockTunnel : IDisposable
         System.Security.Cryptography.CryptographicOperations.ZeroMemory(bytes);
         return pointer;
     }
-    private nint Wide(string value) { nint pointer = Marshal.StringToHGlobalUni(value); allocatedStrings.Add((pointer, checked((value.Length + 1) * 2))); return pointer; }
+    private nint Wide(string value)
+    {
+        // The SDK expects a null pointer for an unused app list. Allow and deny lists are mutually exclusive.
+        if (value.Length == 0) return 0;
+        nint pointer = Marshal.StringToHGlobalUni(value);
+        allocatedStrings.Add((pointer, checked((value.Length + 1) * 2)));
+        return pointer;
+    }
     private static Exception NativeFailure(string action) => new Win32Exception(Marshal.GetLastPInvokeError(), action + " failed. See the WireSock log for details.");
     private void CheckDisposed() => ObjectDisposedException.ThrowIf(disposed, this);
 

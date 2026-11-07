@@ -498,7 +498,22 @@ internal sealed class ConnectionSession(EzConnectClient client) : IDisposable
             session.Profile.Peer["PersistentKeepalive"] = "25";
         if (entirePc)
             session.Profile.Peer["AllowedIPs"] = route.HasIpv6 ? "0.0.0.0/0,::/0" : "0.0.0.0/0";
+        else if (RemoveUnusableServiceIpv6Routes(session.Profile))
+            Diagnostic?.Invoke("The EZConnect profile supplied only an IPv4 tunnel address. Skipped its IPv6 routes.");
         return session.Profile;
+    }
+
+    internal static bool RemoveUnusableServiceIpv6Routes(TunnelProfile profile)
+    {
+        static bool IsIpv6(string cidr) => cidr.Contains(':');
+
+        if (profile.GetInterface("Address").Split(',').Any(IsIpv6)) return false;
+        var ranges = profile.GetPeer("AllowedIPs").Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
+        var ipv4 = ranges.Where(range => !IsIpv6(range)).ToArray();
+        if (ipv4.Length == 0 || ipv4.Length == ranges.Length) return false;
+
+        profile.Peer["AllowedIPs"] = string.Join(",", ipv4);
+        return true;
     }
 
     public async Task DisconnectAsync()

@@ -2,6 +2,8 @@
 
 Windows x64 desktop application for routing selected applications through a WireGuard or supported Amnezia profile using the installed WireSock SDK.
 
+[Download the latest Windows x64 installer](https://github.com/AMIRSRAD/RouteFinder/releases/latest/download/RouteFinderSetup.exe). Install WireSock Secure Connect separately and exit RouteFinder before upgrading.
+
 ## WinUI 3 desktop app
 
 The WinUI app uses the existing routing engine, saved configurations, app selections, and remembered EZConnect sign-in. The connection screen supports selected apps, Entire PC, imported routes, route and destination comparisons, and live status. The **Add app** menu opens the EZConnect game catalog. **Connection options** provides reconnect, app-launch connections, and console routing. **Settings** controls the tunnel and tray behavior, **Activity** provides diagnostics, and **Advanced tools** includes Windows and WireSock maintenance.
@@ -24,6 +26,8 @@ Choose **Selected apps only** in **What to route** to turn on WireSock’s netwo
 Use **Import config** to work with a local WireGuard or supported Amnezia file without signing in. Use **Route options** to edit, export, or remove an imported profile. Profiles are encrypted for the current Windows user in `%LOCALAPPDATA%\RouteFinder\profiles.dat`. App selections are stored separately. The optional remembered sign-in stores an encrypted refresh token. Disconnecting releases the allocated service session.
 
 WireSock Secure Connect must remain installed at its normal location. The application binds its installed `sdk\wgbooster.dll`; no proprietary SDK binaries, drivers, EZConnect branding, or service credentials are bundled. Use of the SDK remains subject to its installed license.
+
+RouteFinder 1.1.8 fixes multi-app routing with WireSock SDK 3.4.8.1 in both Transparent and Virtual adapter modes. This SDK parses comma-separated executable paths despite its bundled guide documenting pipes. RouteFinder selects the correct format for that version automatically. If selected-app traffic stalls, use **Activity → Diagnostics → Active tunnel rules** to check the executable paths and **Activity → Save report** to capture the SDK version and tunnel counters.
 
 ## Build and check
 

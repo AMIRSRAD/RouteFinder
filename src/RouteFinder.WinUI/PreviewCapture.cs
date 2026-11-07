@@ -98,6 +98,9 @@ public sealed partial class MainWindow
             if (!ComparePublicIps("192.0.2.1", "192.0.2.1", "192.0.2.2", "192.0.2.1").Contains("stayed the same") ||
                 !ComparePublicIps("192.0.2.1", "192.0.2.1", "192.0.2.2", "192.0.2.2").Contains("changed too"))
                 throw new InvalidOperationException("The per-app verification did not distinguish a changed control browser.");
+            if (!ComparePublicIps("192.0.2.1", "192.0.2.1", "192.0.2.2", "192.0.2.1", bothSelected: true).StartsWith("Only the first") ||
+                !ComparePublicIps("192.0.2.1", "192.0.2.1", "192.0.2.2", "192.0.2.2", bothSelected: true).StartsWith("Both browsers"))
+                throw new InvalidOperationException("The two-app verification did not distinguish partial routing.");
             UpdateTrafficHealth(10, 100, true);
             UpdateTrafficHealth(10, 200, true);
             sendsWithoutReplySince = System.Diagnostics.Stopwatch.GetTimestamp() - 21 * System.Diagnostics.Stopwatch.Frequency;
@@ -173,7 +176,7 @@ public sealed partial class MainWindow
     void VerifyCatalogRouting(ServiceRoute service)
     {
         using var data = System.Text.Json.JsonDocument.Parse("""{"global_disallowed_domains":"example.test"}""");
-        var game = new CatalogGame("Example game", ["cs2.exe"], ["192.0.2.10"], data.RootElement)
+        var game = new CatalogGame("Example game", ["cs2.exe", "game.helper"], ["192.0.2.10"], data.RootElement)
         {
             LinkedAppNames = ["Launcher"], IncompatibleAppNames = ["Conflicting app"]
         };
@@ -181,7 +184,11 @@ public sealed partial class MainWindow
         var incompatible = new CatalogGame("Conflicting app", ["conflict.exe"], [], default);
         accountCatalog = new BootstrapData([service], [game, launcher, incompatible], "", default);
         selectedGame = game;
-        var result = CatalogRouting(service, [@"C:\Games\cs2.exe", @"C:\Games\launcher.exe"]);
+        string[] paths = [@"C:\Games\cs2.exe", @"C:\Games\game.helper.exe", @"C:\Games\launcher.exe"];
+        var result = CatalogRouting(service, paths);
+        var list = CreateRunningAppList(paths, preselect: true);
+        if (list.SelectedItems.Count != paths.Length)
+            throw new InvalidOperationException("The catalog picker did not preselect all matching executables.");
         if (!result.Ips.Contains("192.0.2.10") || !result.Domains.Contains("example.test"))
             throw new InvalidOperationException("The catalog did not apply bypass rules for the game and its linked app.");
         var conflict = CatalogRouting(service, [@"C:\Games\cs2.exe", @"C:\Games\conflict.exe"]);

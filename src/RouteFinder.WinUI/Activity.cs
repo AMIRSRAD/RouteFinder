@@ -20,7 +20,7 @@ public sealed partial class MainWindow
         var dialog = MakeDialog("Activity", log, "Diagnostics");
         dialog.SecondaryButtonText = "Save report";
         dialog.CloseButtonText = "Close";
-        dialog.IsPrimaryButtonEnabled = !busy && !session.NeedsCleanup;
+        dialog.IsPrimaryButtonEnabled = !busy;
         dialog.IsSecondaryButtonEnabled = !preview;
         switch (await dialog.ShowAsync())
         {
@@ -38,17 +38,25 @@ public sealed partial class MainWindow
         var modes = new ListView { SelectionMode = ListViewSelectionMode.Single, MinWidth = 280 };
         modes.Items.Add("Network and WireSock status");
         modes.Items.Add("App sockets");
+        if (Connected) modes.Items.Add("Active tunnel rules");
         modes.SelectedIndex = 0;
         var picker = MakeDialog("Diagnostics", modes, "Run");
         modes.SelectionChanged += (_, _) => picker.IsPrimaryButtonEnabled = modes.SelectedIndex >= 0;
         if (await picker.ShowAsync() != ContentDialogResult.Primary) return;
+        if (modes.SelectedIndex == 2)
+        {
+            await ShowActiveTunnelRules();
+            return;
+        }
         string? result = null;
         await Run("Collecting diagnostics…", async () =>
         {
-            result = preview ? "Preview mode. No network probes were sent."
-                : modes.SelectedIndex == 1 ? await Diagnostics.ReadSocketSnapshot(CancellationToken.None)
-                : await ReadNetworkStatus();
-            AddActivity(modes.SelectedIndex == 1 ? "Collected app sockets." : "Collected network diagnostics.");
+            result = preview ? "Preview mode. No network probes were sent." : modes.SelectedIndex switch
+            {
+                1 => await Diagnostics.ReadSocketSnapshot(CancellationToken.None),
+                _ => await ReadNetworkStatus()
+            };
+            AddActivity($"Collected {modes.SelectedItem?.ToString()?.ToLowerInvariant()}.");
         });
         if (result is null) return;
         var report = new TextBox
@@ -57,6 +65,26 @@ public sealed partial class MainWindow
             TextWrapping = TextWrapping.Wrap, MinHeight = 240, MaxHeight = 390
         };
         await MakeDialog("Diagnostic results", report).ShowAsync();
+    }
+
+    async Task ShowActiveTunnelRules()
+    {
+        var rules = session.ActiveRoutingDetails.Append(session.ActiveTunnelError is uint error
+            ? $"WireSock error   0x{error:X8}" : "WireSock error   No code reported").ToArray();
+        var rows = new StackPanel { Spacing = 8 };
+        foreach (string rule in rules)
+            rows.Children.Add(new TextBlock { Text = rule, TextWrapping = TextWrapping.Wrap, IsTextSelectionEnabled = true });
+        var dialog = MakeDialog("Active tunnel rules", new ScrollViewer
+        {
+            Content = rows, MinWidth = 320, MaxHeight = 390
+        }, "Copy rules");
+        if (await dialog.ShowAsync() == ContentDialogResult.Primary)
+        {
+            var data = new Windows.ApplicationModel.DataTransfer.DataPackage();
+            data.SetText(string.Join(Environment.NewLine, rules));
+            Windows.ApplicationModel.DataTransfer.Clipboard.SetContent(data);
+            Report("Copied the active tunnel rules.", InfoBarSeverity.Success);
+        }
     }
 
     static async Task<string> ReadNetworkStatus()
@@ -110,6 +138,8 @@ public sealed partial class MainWindow
         if (session.HasTunnel)
         {
             yield return $"Mode {(connectedForConsole ? "Console" : Scope.SelectedIndex == 1 ? "Entire PC" : BlocksOtherApps ? "Selected apps only" : "Selected apps")} · Backend {(connectedForConsole || preferences.PortableEngine ? "virtual adapter" : "transparent")}";
+            if (session.ActiveTunnelError is uint error)
+                yield return $"WireSock error: 0x{error:X8}";
             if (session.State is { } stats)
                 yield return $"Handshake age {stats.TimeSinceLastHandshakeMilliseconds} ms · RX {stats.RxBytes} bytes · TX {stats.TxBytes} bytes";
         }

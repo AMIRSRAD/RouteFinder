@@ -304,7 +304,7 @@ public sealed partial class MainWindow
             if (wasWatched && !watchOwnsTunnel) CancelWatch();
         }
         if (!automatic) recoveryAttempted = false;
-        reconnectFailed = !session.HasTunnel || session.NeedsCleanup;
+        reconnectFailed = !session.HasTunnel;
         if (reconnectFailed) AddActivity("The reconnect did not restore a tunnel.");
         Refresh();
     }
