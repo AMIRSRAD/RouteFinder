@@ -87,7 +87,7 @@ public sealed partial class MainWindow
                     RouteTestSeconds = Number(testTime, "Route test timeout", 5, 180)!.Value,
                     SocksProxyOverride = "", SocksProxyCredentials = updatedProxy
                 };
-                if (!preview) ProfileStore.SavePreferences(updated);
+                if (!preview) WriteStore("preferences", () => ProfileStore.SavePreferences(updated));
                 preferences = updated;
                 AddActivity("Saved connection settings.");
                 Refresh();

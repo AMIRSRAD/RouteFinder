@@ -2,6 +2,7 @@ using System.Net;
 using System.Text;
 using System.Text.Json;
 using RouteFinder.Service;
+using RouteFinder.App;
 
 if (args.Contains("--compare-local-device"))
 {
@@ -65,6 +66,38 @@ await Check("Bootstrap uses bearer and retains game rules", async () =>
     var bootstrap = await client.BootstrapAsync("test-token"); Assert(bootstrap.Routes.Count == 1 && bootstrap.Games[0].ExecutableNames.Length == 2 && bootstrap.Games[0].GlobalDisallowedIps[0] == "192.168.0.0/16", "Lost settings");
 });
 string GoodResponse() => JsonSerializer.Serialize(new { session_id = "test-session", config = new { Interface = new { Address = "10.0.0.2/32", MTU = 1380 }, Peer = new { PublicKey = peerKey, Port = 51820 } }, routes = new[] { new { name = route.Name, route_endpoint = "192.0.2.1", route_allowedips = "0.0.0.0/0", route_dns = "1.1.1.1" } } });
+await Check("Cancel during provisioning releases the allocated session", async () =>
+{
+    using var cancel = new CancellationTokenSource();
+    bool released = false;
+    using var connection = new ConnectionSession(new EzConnectClient(new FakeHandler(async request =>
+    {
+        switch (request.RequestUri!.AbsolutePath)
+        {
+            case "/api/desktop/auth/refresh":
+                return Reply("""{"access_token":"test-access","refresh_token":"test-refresh"}""");
+            case "/api/desktop/bootstrap":
+                return Reply("""{"routes":[],"games":[]}""");
+            case "/api/desktop/sessions/connect":
+                cancel.Cancel();
+                return Reply(GoodResponse());
+            case "/api/desktop/sessions/disconnect":
+                using (var body = JsonDocument.Parse(await request.Content!.ReadAsStringAsync()))
+                    released = body.RootElement.GetProperty("session_id").GetString() == "test-session";
+                return Reply("{}");
+            default:
+                throw new InvalidOperationException("Unexpected service request.");
+        }
+    })));
+    await connection.RestoreAsync("test-refresh");
+    try
+    {
+        await connection.TestAsync(route, null, cancel.Token);
+        throw new InvalidOperationException("The canceled test continued.");
+    }
+    catch (OperationCanceledException) when (cancel.IsCancellationRequested) { }
+    Assert(released && !connection.HasTunnel && !connection.NeedsCleanup, "The canceled test left an allocation behind.");
+});
 await Check("Read route details nested inside the WireGuard peer", () => Sync(() =>
 {
     using var json = JsonDocument.Parse(JsonSerializer.Serialize(new

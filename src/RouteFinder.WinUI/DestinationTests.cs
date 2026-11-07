@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using System.Net;
 using System.Net.Sockets;
 using Microsoft.UI.Xaml;
@@ -47,9 +46,9 @@ public sealed partial class MainWindow
     async Task ConfigureDestination(IPAddress address)
     {
         var protocol = new RadioButtons { Header = "Protocol", MaxColumns = 2 };
-        protocol.Items.Add("ICMP ping");
+        protocol.Items.Add("ICMP ping · Windows route only");
         protocol.Items.Add("TCP connect");
-        protocol.SelectedIndex = 0;
+        protocol.SelectedIndex = 1;
         var port = Field("TCP port", 443);
         var count = Field("ICMP probe count", 4);
         var interval = Field("ICMP interval in milliseconds", 250);
@@ -60,18 +59,18 @@ public sealed partial class MainWindow
         var content = new StackPanel { Spacing = 8, MinWidth = 305 };
         foreach (UIElement element in new UIElement[] { protocol, port, count, interval, size, timeout, ttl, validation })
             content.Children.Add(element);
+        var eligible = Routes().Where(choice => choice.Service?.IsDownload != true).ToArray();
+        var dialog = MakeDialog($"Test {address}", new ScrollViewer { Content = content, MaxHeight = 390 }, "Choose routes");
         void UpdateProtocol()
         {
             bool tcp = protocol.SelectedIndex == 1;
+            dialog.IsPrimaryButtonEnabled = tcp && eligible.Length > 0;
             port.Visibility = tcp ? Visibility.Visible : Visibility.Collapsed;
             foreach (var field in new[] { count, interval, size, ttl })
                 field.Visibility = tcp ? Visibility.Collapsed : Visibility.Visible;
         }
         protocol.SelectionChanged += (_, _) => UpdateProtocol();
         UpdateProtocol();
-        var eligible = Routes().Where(choice => choice.Service?.IsDownload != true).ToArray();
-        var dialog = MakeDialog($"Test {address}", new ScrollViewer { Content = content, MaxHeight = 390 }, "Choose routes");
-        dialog.IsPrimaryButtonEnabled = eligible.Length > 0;
         dialog.SecondaryButtonText = "Windows route only";
         DestinationOptions? options = null;
         dialog.PrimaryButtonClick += (_, args) => args.Cancel = !Validate();
@@ -105,7 +104,7 @@ public sealed partial class MainWindow
 
     async Task RunDestinationTests(IPAddress address, DestinationOptions options, RouteChoice[] chosen)
     {
-        if (busy || Connected || session.NeedsCleanup || (!preview && chosen.Length > 0 && !EnsureAdministrator())) return;
+        if (busy || Connected || session.NeedsCleanup || (chosen.Length > 0 && (options.Port is null || !preview && !EnsureAdministrator()))) return;
         using var cancellation = new CancellationTokenSource();
         var token = cancellation.Token;
         activeTest = cancellation;
@@ -127,30 +126,27 @@ public sealed partial class MainWindow
                     else baseline = await Diagnostics.MeasurePing(address.ToString(), options.Count, cancellation: token,
                         intervalMilliseconds: options.Interval, payloadBytes: options.Size, timeoutMilliseconds: options.Timeout, ttl: options.Ttl);
                     Record("Windows baseline", baseline);
-                    long? lastServiceAttempt = null;
                     foreach (var choice in chosen)
                     {
                         token.ThrowIfCancellationRequested();
                         ConnectionDetail.Text = $"{choice.Title} · {address}";
                         try
                         {
-                            if (!preview && choice.Service is not null && lastServiceAttempt is long last)
-                            {
-                                var wait = TimeSpan.FromSeconds(10) - Stopwatch.GetElapsedTime(last);
-                                if (wait > TimeSpan.Zero) await Task.Delay(wait, token);
-                            }
                             var report = preview ? new PingReport("Simulated route probe", 4, 4, 43, 1)
-                                : await ProbeThroughRoute(choice, address, options, token);
+                                : await ProbeThroughRoute(choice, address, options.Port!.Value, options.Timeout, token);
                             Record(choice.Title, report, baseline);
+                        }
+                        catch (EzConnectServiceException error) when (error.StatusCode == 429)
+                        {
+                            string message = $"Stopped at {choice.Title} · {error.Message} Completed results were kept.";
+                            reports.Add(message);
+                            AddActivity(message);
+                            break;
                         }
                         catch (Exception error) when (error is not OperationCanceledException && !session.NeedsCleanup)
                         {
                             reports.Add($"{choice.Title}\n{error.Message}");
                             AddActivity($"{choice.Title} · {error.Message}");
-                        }
-                        finally
-                        {
-                            if (choice.Service is not null) lastServiceAttempt = Stopwatch.GetTimestamp();
                         }
                     }
                 }
@@ -173,19 +169,11 @@ public sealed partial class MainWindow
         }
     }
 
-    async Task<PingReport> ProbeThroughRoute(RouteChoice choice, IPAddress address, DestinationOptions options, CancellationToken token)
+    async Task<PingReport> ProbeThroughRoute(RouteChoice choice, IPAddress address, int port, int timeout, CancellationToken token)
     {
         var profile = choice.Profile is { } saved ? TunnelProfile.Parse(saved.Configuration, saved.Name) : null;
-        Task<PingReport> Probe() => session.ProbeDestinationAsync(choice.Service, profile, address, preferences.PortableEngine,
-            token, options.Count, options.Interval, options.Size, options.Timeout, options.Ttl,
-            preferences.AutoMtu, preferences.TunnelMtu, preferences.KeepaliveSeconds, options.Port, ConfiguredProxy);
-        try { return await Probe(); }
-        catch (EzConnectServiceException error) when (error.StatusCode == 429 && !session.NeedsCleanup &&
-            (error.RetryAfter ?? TimeSpan.FromSeconds(30)) <= TimeSpan.FromMinutes(5))
-        {
-            ConnectionDetail.Text = $"{choice.Title} · Waiting for EZConnect cooldown";
-            await Task.Delay(error.RetryAfter ?? TimeSpan.FromSeconds(30), token);
-            return await Probe();
-        }
+        Task<PingReport> Probe() => session.ProbeDestinationAsync(choice.Service, profile, address, port, preferences.PortableEngine, token, timeout,
+            preferences.AutoMtu, preferences.TunnelMtu, preferences.KeepaliveSeconds, ConfiguredProxy);
+        return await RunPacedProbe(choice, Probe, token);
     }
 }

@@ -8,7 +8,7 @@ namespace RouteFinder.WinUI;
 
 public sealed partial class MainWindow
 {
-    static readonly SizeInt32[] WindowSizes = [new(1040, 600), new(1050, 690), new(1440, 900), new(1600, 1000)];
+    static readonly SizeInt32[] WindowSizes = [new(1120, 680), new(1050, 690), new(1440, 900), new(1600, 1000)];
 
     void ApplyWindowSize(bool center = false)
     {
@@ -37,7 +37,6 @@ public sealed partial class MainWindow
         AddIcon(SettingsButton, "\uE713");
         AddIcon(AdvancedButton, "\uE90F");
         AddIcon(AddAppsButton, "\uE710");
-        AddIcon(ChooseRouteButton, "\uE8B7");
         AddIcon(AddRouteButton, "\uE710");
         AddIcon(TestRouteButton, "\uE9D9");
         AddIcon(TestAllButton, "\uE8FD");
@@ -119,7 +118,7 @@ public sealed partial class MainWindow
         if (await dialog.ShowAsync() != ContentDialogResult.Primary) return;
         bool languageChanged = UiLanguage.Index != languages.SelectedIndex;
         var updated = preferences with { WindowPreset = sizes.SelectedIndex, ShowTutorials = tips.IsOn };
-        ProfileStore.SavePreferences(updated);
+        WriteStore("preferences", () => ProfileStore.SavePreferences(updated));
         preferences = updated;
         if (languageChanged)
         {

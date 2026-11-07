@@ -62,12 +62,12 @@ internal sealed class ConnectionSession(EzConnectClient client) : IDisposable
         bool networkLock = false, bool portable = false, string dnsOverride = "", bool autoMtu = false,
         string[]? bypassIps = null, string[]? bypassDomains = null, bool consoleMode = false, bool bypassLan = false,
         int? keepaliveSeconds = null, string[]? excludedApplications = null, int? tunnelMtu = null,
-        ProxyOverride? socksProxyOverride = null)
+        ProxyOverride? socksProxyOverride = null, bool blockOtherApps = false)
     {
-        var bypass = new List<string>(bypassIps ?? []);
+        var bypass = new List<string>(blockOtherApps ? [] : bypassIps ?? []);
         using (var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10)))
         {
-            foreach (string domain in bypassDomains ?? [])
+            foreach (string domain in blockOtherApps ? [] : bypassDomains ?? [])
             {
                 if (Uri.CheckHostName(domain) != UriHostNameType.Dns)
                     throw new FormatException("A destination bypass hostname is invalid.");
@@ -123,7 +123,12 @@ internal sealed class ConnectionSession(EzConnectClient client) : IDisposable
                 profile.Interface["DisallowedApps"] = string.Join("|",
                     Enumerable.Range('A', 26).Select(letter => $"{(char)letter}:\\"));
             }
-            if (consoleMode || bypassLan)
+            if (blockOtherApps)
+            {
+                profile.Interface.Remove("IgnoredIPs");
+                profile.Interface.Remove("DisallowedIPs");
+            }
+            else if (consoleMode || bypassLan)
             {
                 profile.Interface["IgnoredIPs"] = string.Join(",", new[]
                 {
@@ -204,7 +209,6 @@ internal sealed class ConnectionSession(EzConnectClient client) : IDisposable
                 using var probe = StartTunnel(profile, [Environment.ProcessPath!], portable: portable);
                 int probes = 0;
                 bool tcpReached = false;
-                var samples = new List<int>();
                 TunnelState? confirmed = null;
                 using var window = CancellationTokenSource.CreateLinkedTokenSource(cancellation);
                 int limitSeconds = Math.Clamp(routeTestSeconds, 5, 120);
@@ -229,10 +233,17 @@ internal sealed class ConnectionSession(EzConnectClient client) : IDisposable
                     var state = probe.GetState();
                     if (probe.HandshakeResponseObserved || state.TimeSinceLastHandshakeMilliseconds >= 0 || state.RxBytes > 0)
                     {
-                        firstResponseSeconds ??= System.Diagnostics.Stopwatch.GetElapsedTime(started).TotalSeconds;
                         confirmed = state;
-                        if (state.EstimatedRtt > 0) samples.Add(state.EstimatedRtt);
-                        if (samples.Count >= 5) break;
+                        double elapsedSinceStart = System.Diagnostics.Stopwatch.GetElapsedTime(started).TotalSeconds;
+                        if (firstResponseSeconds is null)
+                        {
+                            firstResponseSeconds = elapsedSinceStart;
+                            // Give the SDK a short window to update its peer estimates.
+                            // Keep the original deadline if it will expire sooner.
+                            var remaining = Math.Min(4, limitSeconds - elapsedSinceStart);
+                            if (remaining <= 0) break;
+                            window.CancelAfter(TimeSpan.FromSeconds(remaining));
+                        }
                     }
                 }
                 cancellation.ThrowIfCancellationRequested();
@@ -241,12 +252,9 @@ internal sealed class ConnectionSession(EzConnectClient client) : IDisposable
                     TcpReached: tcpReached, ProbeSeconds: elapsed, ProbeLimitSeconds: limitSeconds,
                     ProbeTarget: target.ToString(), ProxyStatus: probe.ProxyStatus, TunnelError: probe.LastTunnelError,
                     HandshakeAttempts: probe.HandshakeAttempts);
-                float? jitter = samples.Count > 1
-                    ? (float)samples.Zip(samples.Skip(1), (previous, current) => Math.Abs(current - previous)).Average()
-                    : null;
                 return new RouteTestResult(profile.Endpoint, true, measured.EstimatedRtt > 0 ? measured.EstimatedRtt : null, probes,
                     measured.RxBytes > 0 && float.IsFinite(measured.EstimatedLoss) && measured.EstimatedLoss is >= 0 and <= 100 ? measured.EstimatedLoss : null,
-                    samples.Count > 1 ? samples.Max() - samples.Min() : null, tcpReached, Jitter: jitter,
+                    TcpReached: tcpReached,
                     ProbeSeconds: elapsed, ProbeLimitSeconds: limitSeconds, FirstResponseSeconds: firstResponseSeconds,
                     ProbeTarget: target.ToString(), ProxyStatus: probe.ProxyStatus, TunnelError: probe.LastTunnelError,
                     HandshakeAttempts: probe.HandshakeAttempts);
@@ -255,19 +263,13 @@ internal sealed class ConnectionSession(EzConnectClient client) : IDisposable
         finally { await ReleaseAsync(); }
     }
 
-    public async Task<string> ProbeGameServerAsync(ServiceRoute route, GameServer server, bool portable,
-        CancellationToken cancellation = default, bool autoMtu = false,
-        int? tunnelMtu = null, int? keepaliveSeconds = null, ProxyOverride? socksProxyOverride = null) =>
-        (await ProbeDestinationAsync(route, null, server.Address, portable, cancellation,
-            autoMtu: autoMtu, tunnelMtu: tunnelMtu, keepaliveSeconds: keepaliveSeconds,
-            socksProxyOverride: socksProxyOverride)).Detail;
-
     public async Task<PingReport> ProbeDestinationAsync(ServiceRoute? route, TunnelProfile? local,
-        System.Net.IPAddress destination, bool portable, CancellationToken cancellation = default, int count = 4,
-        int intervalMilliseconds = 0, int payloadBytes = 32, int timeoutMilliseconds = 1500, int ttl = 128,
-        bool autoMtu = false, int? tunnelMtu = null, int? keepaliveSeconds = null, int? tcpPort = null,
-        ProxyOverride? socksProxyOverride = null)
+        System.Net.IPAddress destination, int tcpPort, bool portable, CancellationToken cancellation = default,
+        int timeoutMilliseconds = 1500, bool autoMtu = false, int? tunnelMtu = null,
+        int? keepaliveSeconds = null, ProxyOverride? socksProxyOverride = null)
     {
+        if (tcpPort is < 1 or > 65535)
+            throw new DestinationProbeException("Enter a TCP port between 1 and 65535.");
         cancellation.ThrowIfCancellationRequested();
         if (local is not null && (local.GetInterface("AllowedApps").Length > 0 ||
             local.GetInterface("DisallowedApps").Length > 0))
@@ -291,27 +293,22 @@ internal sealed class ConnectionSession(EzConnectClient client) : IDisposable
                 ip.AddressFamily == System.Net.Sockets.AddressFamily.InterNetworkV6))
                 throw new DestinationProbeException("This profile has no IPv6 tunnel address.");
             profile.Peer["AllowedIPs"] = $"{destination}/{(ipv6 ? 128 : 32)}";
+            profile.Interface.Remove("DNS");
             ApplyProxyOverride(profile, socksProxyOverride);
             await ApplyTunnelOverridesAsync(profile, autoMtu, tunnelMtu, keepaliveSeconds, cancellation);
             cancellation.ThrowIfCancellationRequested();
             return await Task.Run(async () =>
             {
-                bool isTcpProbe = tcpPort.HasValue;
-                string[] probeApps = isTcpProbe
-                    ? [Environment.ProcessPath ?? throw new InvalidOperationException("Could not locate the RouteFinder executable for the TCP probe.")]
-                    : [];
-                using var tunnel = StartTunnel(profile, probeApps, portable: portable, allApplications: !isTcpProbe);
+                string executable = Environment.ProcessPath ??
+                    throw new InvalidOperationException("Could not locate the RouteFinder executable for the TCP probe.");
+                using var tunnel = StartTunnel(profile, [executable], portable: portable);
                 var before = tunnel.GetState();
-                var tcpResult = tcpPort is int port
-                    ? await Diagnostics.MeasureTcp(destination.ToString(), port, cancellation, timeoutMilliseconds) : null;
-                var report = tcpResult is not null ? new PingReport(tcpResult.Detail, Tcp: tcpResult)
-                    : await Diagnostics.MeasurePing(destination.ToString(), count, tunnelExpected: true,
-                    cancellation: cancellation, intervalMilliseconds: intervalMilliseconds,
-                    payloadBytes: payloadBytes, timeoutMilliseconds: timeoutMilliseconds, ttl: ttl);
+                var tcp = await Diagnostics.MeasureTcp(destination.ToString(), tcpPort, cancellation, timeoutMilliseconds);
+                var report = new PingReport(tcp.Detail, Tcp: tcp);
                 var after = tunnel.GetState();
                 bool handshake = tunnel.HandshakeResponseObserved || after.TimeSinceLastHandshakeMilliseconds >= 0;
                 ulong received = after.RxBytes - Math.Min(before.RxBytes, after.RxBytes);
-                bool pathUnverified = (report.Received > 0 || tcpResult?.Connected == true) && !handshake && received == 0;
+                bool pathUnverified = tcp.Connected && (!handshake || received == 0);
                 uint? tunnelError = tunnel.LastTunnelError;
                 return report with
                 {
@@ -327,8 +324,8 @@ internal sealed class ConnectionSession(EzConnectClient client) : IDisposable
                         Environment.NewLine +
                         (handshake ? "WireSock reported a peer handshake." : "WireSock did not report a peer handshake.") +
                         Environment.NewLine +
-                        $"WireSock counters during probe: received {received} bytes, sent {after.TxBytes - Math.Min(before.TxBytes, after.TxBytes)} bytes. Counters do not identify individual ICMP replies." +
-                        (pathUnverified ? Environment.NewLine + "The destination responded without a reported handshake or incoming tunnel bytes. Windows may have used a different route." : "")
+                        $"WireSock counters during probe: received {received} bytes, sent {after.TxBytes - Math.Min(before.TxBytes, after.TxBytes)} bytes. Counters do not identify individual TCP connections." +
+                        (pathUnverified ? Environment.NewLine + "A TCP reply was received, but the tunnel path was not verified." : "")
                 };
             });
         }
@@ -490,6 +487,13 @@ internal sealed class ConnectionSession(EzConnectClient client) : IDisposable
             throw;
         }
         allocation = session.SessionId;
+        // Provisioning can create a session even if the user has already canceled.
+        // Capture the allocation first, then release it before returning cancellation.
+        if (cancellation.IsCancellationRequested)
+        {
+            await ReleaseAsync();
+            cancellation.ThrowIfCancellationRequested();
+        }
         if (session.Profile.GetPeer("PersistentKeepalive").Length == 0)
             session.Profile.Peer["PersistentKeepalive"] = "25";
         if (entirePc)

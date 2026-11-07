@@ -23,11 +23,8 @@ public sealed partial class MainWindow
                 Root.Loaded += (_, _) => loaded.TrySetResult();
                 await loaded.Task;
             }
-            var bitmap = new RenderTargetBitmap();
-            await bitmap.RenderAsync(Root);
-            byte[] pixels = (await bitmap.GetPixelsAsync()).ToArray();
-            if (pixels.Length == 0 || !ConnectButton.IsEnabled || !AccountButton.IsEnabled || !AdvancedButton.IsEnabled ||
-                RouteSource.Text != "Imported config" || checkedApps.Count != 2)
+            if (!ConnectButton.IsEnabled || !AccountButton.IsEnabled || !AdvancedButton.IsEnabled ||
+                (RouteList.SelectedItem as RoutePickerRow)?.Key != "local:Amsterdam · Home relay" || checkedApps.Count != 2)
                 throw new InvalidOperationException("The preview did not render its sample route and app selection.");
             if (!TestRouteButton.IsEnabled || !CompareButton.IsEnabled || !SettingsButton.IsEnabled || !RouteOptionsButton.IsEnabled ||
                 !DestinationButton.IsEnabled || !ConnectionActionsButton.IsEnabled || !TestAllButton.IsEnabled)
@@ -45,13 +42,6 @@ public sealed partial class MainWindow
             VerifyLaunchActivation();
             if (applicationIcon is null)
                 throw new InvalidOperationException("The RouteFinder window and tray icon could not be loaded.");
-            using var file = File.Create(path);
-            using var output = file.AsRandomAccessStream();
-            var encoder = await BitmapEncoder.CreateAsync(BitmapEncoder.PngEncoderId, output);
-            encoder.SetPixelData(BitmapPixelFormat.Bgra8, BitmapAlphaMode.Ignore, (uint)bitmap.PixelWidth,
-                (uint)bitmap.PixelHeight, 96, 96, pixels);
-            await encoder.FlushAsync();
-
             var imported = route!;
             var allRoutes = Routes().ToArray();
             var batch = await CollectRouteTests(allRoutes);
@@ -59,8 +49,21 @@ public sealed partial class MainWindow
                 throw new InvalidOperationException("The full route batch did not test every route.");
             ToggleFavorite(imported);
             Refresh();
-            if (!IsFavorite(imported) || !RouteDetail.Text.Contains("42 ms", StringComparison.Ordinal))
+            if (!IsFavorite(imported) || (RouteList.SelectedItem as RoutePickerRow)?.Result != "42 ms · 0% est. loss")
                 throw new InvalidOperationException("The preview did not display the simulated test result and retain the favorite.");
+            RouteRegion.SelectedItem = "TR";
+            RouteSearch.Text = "Istanbul";
+            if (RouteList.Items.Count != 1 || (RouteList.Items[0] as RoutePickerRow)?.Key != "TR:2")
+                throw new InvalidOperationException("Search and region filters did not combine correctly.");
+            if (FilteredRouteChoices().Single().Key != "TR:2" ||
+                (RouteList.Items[0] as RoutePickerRow)?.TestAge is not { Length: > 0 })
+                throw new InvalidOperationException("The shortlist did not honor the current filters or show the saved test time.");
+            RouteFilter.SelectedItem = "Imported configs";
+            if (RouteList.Items.Count != 0)
+                throw new InvalidOperationException("The source filter was not applied alongside the region filter.");
+            RouteFilter.SelectedIndex = 0;
+            RouteRegion.SelectedIndex = 0;
+            RouteSearch.Text = "";
             route = Routes().First(choice => choice.Source == "EZConnect");
             VerifyCatalogRouting(route.Service!);
             var serviceResult = measurements[route.Key];
@@ -68,11 +71,42 @@ public sealed partial class MainWindow
                 throw new InvalidOperationException("The preview did not test the EZConnect route.");
             Refresh();
             ToggleConnection(this, new RoutedEventArgs());
-            if (ConnectionTitle.Text != "Connected · preview" || RouteSource.Text != "EZConnect" || Scope.IsEnabled)
+            if (ConnectionTitle.Text != "Connected · preview" || LiveRtt.Text != "42 ms" || Scope.IsEnabled)
                 throw new InvalidOperationException("The connected preview did not display the active route and lock traffic scope.");
+            RecordRtt(null, 0);
+            long now = System.Diagnostics.Stopwatch.GetTimestamp();
+            int[] series = [62, 58, 47, 49, 43, 45, 42];
+            for (int i = 0; i < series.Length; i++)
+                RecordRtt(series[i], now - (series.Length - i - 1) * System.Diagnostics.Stopwatch.Frequency);
+            if (LiveVariation.Text == "—" || LatencyTrend.Points.Count != series.Length)
+                throw new InvalidOperationException("The live panel did not display the RTT trend and variation.");
+            await Task.Delay(350);
+            var bitmap = new RenderTargetBitmap();
+            await bitmap.RenderAsync(Root);
+            byte[] pixels = (await bitmap.GetPixelsAsync()).ToArray();
+            if (pixels.Length == 0) throw new InvalidOperationException("The live workspace could not be rendered.");
+            using var file = File.Create(path);
+            using var output = file.AsRandomAccessStream();
+            var encoder = await BitmapEncoder.CreateAsync(BitmapEncoder.PngEncoderId, output);
+            encoder.SetPixelData(BitmapPixelFormat.Bgra8, BitmapAlphaMode.Ignore, (uint)bitmap.PixelWidth,
+                (uint)bitmap.PixelHeight, 96, 96, pixels);
+            await encoder.FlushAsync();
+
             ToggleConnection(this, new RoutedEventArgs());
             if (ConnectionTitle.Text != "Disconnected" || !Scope.IsEnabled)
                 throw new InvalidOperationException("Disconnecting did not restore the editable preview.");
+            if (!ComparePublicIps("192.0.2.1", "192.0.2.1", "192.0.2.2", "192.0.2.1").Contains("stayed the same") ||
+                !ComparePublicIps("192.0.2.1", "192.0.2.1", "192.0.2.2", "192.0.2.2").Contains("changed too"))
+                throw new InvalidOperationException("The per-app verification did not distinguish a changed control browser.");
+            UpdateTrafficHealth(10, 100, true);
+            UpdateTrafficHealth(10, 200, true);
+            sendsWithoutReplySince = System.Diagnostics.Stopwatch.GetTimestamp() - 21 * System.Diagnostics.Stopwatch.Frequency;
+            UpdateTrafficHealth(10, 200, true);
+            if (HealthAlert.Visibility != Visibility.Visible)
+                throw new InvalidOperationException("The live panel did not flag outbound traffic with no received bytes.");
+            UpdateTrafficHealth(20, 200, true);
+            if (HealthAlert.Visibility != Visibility.Collapsed)
+                throw new InvalidOperationException("The alert did not clear when incoming bytes resumed.");
             await VerifyNarrowLayout();
             bool exitDeferred = false;
             await Run("Checking exit during an operation…", async () =>

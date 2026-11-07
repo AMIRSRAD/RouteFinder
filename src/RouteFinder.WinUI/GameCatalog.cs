@@ -43,7 +43,9 @@ public sealed partial class MainWindow
         }
         var search = new TextBox { PlaceholderText = "Search games and apps" };
         AutomationProperties.SetName(search, "Search catalog");
-        var list = new ListView { SelectionMode = ListViewSelectionMode.Single, MaxHeight = 300, MinWidth = 310 };
+        var list = new ListView { SelectionMode = ListViewSelectionMode.Single, MaxHeight = 300, MinWidth = 310,
+            DisplayMemberPath = nameof(CatalogGame.DisplayName) };
+        var games = catalog.Games.OrderBy(game => game.Name, StringComparer.OrdinalIgnoreCase).ToArray();
         var content = new StackPanel { Spacing = 10 };
         content.Children.Add(search);
         content.Children.Add(list);
@@ -51,14 +53,11 @@ public sealed partial class MainWindow
         dialog.SecondaryButtonText = selectedGame is null ? "" : "Clear game selection";
         void Populate()
         {
-            list.Items.Clear();
-            foreach (var game in catalog.Games.Where(game => game.Name.Contains(search.Text.Trim(), StringComparison.OrdinalIgnoreCase))
-                         .OrderBy(game => game.Name, StringComparer.OrdinalIgnoreCase))
-            {
-                var item = new ListViewItem { Content = game.DisplayName, Tag = game };
-                list.Items.Add(item);
-                if (game == selectedGame) list.SelectedItem = item;
-            }
+            var previous = list.SelectedItem as CatalogGame ?? selectedGame;
+            string query = search.Text.Trim();
+            var matching = games.Where(game => game.Name.Contains(query, StringComparison.OrdinalIgnoreCase)).ToArray();
+            list.ItemsSource = matching;
+            if (previous is not null && matching.Contains(previous)) list.SelectedItem = previous;
             dialog.IsPrimaryButtonEnabled = list.SelectedItem is not null;
         }
         list.SelectionChanged += (_, _) => dialog.IsPrimaryButtonEnabled = list.SelectedItem is not null;
@@ -66,7 +65,7 @@ public sealed partial class MainWindow
         Populate();
         var choice = await dialog.ShowAsync();
         if (choice == ContentDialogResult.Secondary) { selectedGame = null; Refresh(); return; }
-        if (choice != ContentDialogResult.Primary || (list.SelectedItem as ListViewItem)?.Tag is not CatalogGame selected) return;
+        if (choice != ContentDialogResult.Primary || list.SelectedItem is not CatalogGame selected) return;
         selectedGame = selected;
         Refresh();
         await ShowGameActions(selected);

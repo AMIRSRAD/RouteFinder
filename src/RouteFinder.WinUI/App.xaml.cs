@@ -12,13 +12,13 @@ public sealed partial class App : Application
 
     public App() => InitializeComponent();
 
-    protected override void OnLaunched(LaunchActivatedEventArgs args)
+    protected override async void OnLaunched(LaunchActivatedEventArgs args)
     {
         var arguments = Environment.GetCommandLineArgs();
         int startupArgument = Array.IndexOf(arguments, "--check-startup");
         if (startupArgument >= 0 && arguments.ElementAtOrDefault(startupArgument + 1) is { } report)
         {
-            window = MainWindow.VerifyStartup(report);
+            await MainWindow.VerifyStartup(report);
             return;
         }
         int captureArgument = Array.IndexOf(arguments, "--capture-preview");

@@ -22,7 +22,10 @@ internal static class ProfileStore
     static string LoginPath => Path.Combine(DirectoryPath, "login.dat");
     static string PreferencesPath => Path.Combine(DirectoryPath, "preferences.dat");
     static string MeasurementsPath => Path.Combine(DirectoryPath, "route-tests.dat");
+    static string PresetsPath => Path.Combine(DirectoryPath, "presets.dat");
     internal sealed record RememberedLogin(string Email, string RefreshToken);
+    internal sealed record RoutingPreset(string Name, string RouteKey, string RouteName, bool EntirePc, string[] Apps, string? CatalogGame,
+        bool BlockOtherApps = false);
     internal sealed record Preferences(bool MinimizeToTray, List<string> Favorites, bool EntirePcMode = false,
         bool KillSwitch = false, bool PortableEngine = false, string DnsOverride = "",
         bool Ipv6PreferenceConfigured = false, bool EnableIpv6Bindings = false, bool AutoMtu = false,
@@ -31,14 +34,23 @@ internal static class ProfileStore
         int? KeepaliveSeconds = null, string[]? ExcludedApplications = null, int? TunnelMtu = null,
         string? LastConnectedRoute = null, int PeerResponseSeconds = 25, int RouteTestSeconds = 20,
         int RouteSortMetric = 0, string SocksProxyOverride = "", ProxyOverride? SocksProxyCredentials = null,
-        bool RecoverStoppedTunnel = false, string[]? UncheckedApplications = null);
+        bool RecoverStoppedTunnel = false, string[]? UncheckedApplications = null, bool BlockOtherApps = false);
 
     public static Preferences LoadPreferences() => File.Exists(PreferencesPath)
         ? JsonSerializer.Deserialize<Preferences>(Protect(File.ReadAllBytes(PreferencesPath), false)) ?? new(false, []) : new(false, []);
     public static void SavePreferences(Preferences value) => SaveProtected(PreferencesPath, value);
-    public static Dictionary<string, RouteTestResult> LoadMeasurements() => File.Exists(MeasurementsPath)
-        ? JsonSerializer.Deserialize<Dictionary<string, RouteTestResult>>(Protect(File.ReadAllBytes(MeasurementsPath), false)) ?? [] : [];
+    public static Dictionary<string, RouteTestResult> LoadMeasurements()
+    {
+        var results = File.Exists(MeasurementsPath)
+            ? JsonSerializer.Deserialize<Dictionary<string, RouteTestResult>>(Protect(File.ReadAllBytes(MeasurementsPath), false)) ?? [] : [];
+        foreach (string key in results.Keys.ToArray())
+            results[key] = results[key] with { Jitter = null, RttSpread = null };
+        return results;
+    }
     public static void SaveMeasurements(Dictionary<string, RouteTestResult> value) => SaveProtected(MeasurementsPath, value);
+    public static List<RoutingPreset> LoadPresets() => File.Exists(PresetsPath)
+        ? JsonSerializer.Deserialize<List<RoutingPreset>>(Protect(File.ReadAllBytes(PresetsPath), false)) ?? [] : [];
+    public static void SavePresets(List<RoutingPreset> value) => SaveProtected(PresetsPath, value);
 
     public static RememberedLogin? LoadLogin()
     {

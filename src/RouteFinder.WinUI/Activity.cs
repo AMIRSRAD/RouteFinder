@@ -109,7 +109,7 @@ public sealed partial class MainWindow
         yield return $"Selected apps: {checkedApps.Count}";
         if (session.HasTunnel)
         {
-            yield return $"Mode {(connectedForConsole ? "Console" : Scope.SelectedIndex == 1 ? "Entire PC" : "Selected apps")} · Backend {(connectedForConsole || preferences.PortableEngine ? "virtual adapter" : "transparent")}";
+            yield return $"Mode {(connectedForConsole ? "Console" : Scope.SelectedIndex == 1 ? "Entire PC" : BlocksOtherApps ? "Selected apps only" : "Selected apps")} · Backend {(connectedForConsole || preferences.PortableEngine ? "virtual adapter" : "transparent")}";
             if (session.State is { } stats)
                 yield return $"Handshake age {stats.TimeSinceLastHandshakeMilliseconds} ms · RX {stats.RxBytes} bytes · TX {stats.TxBytes} bytes";
         }

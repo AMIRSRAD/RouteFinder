@@ -20,74 +20,96 @@ public sealed partial class MainWindow
         DefaultButton = primary.Length == 0 ? ContentDialogButton.Close : ContentDialogButton.Primary
     };
 
-    async void PickRoute(object sender, RoutedEventArgs args)
+    public sealed record RoutePickerRow(string Key, string Title, string Detail, string AccessibleName, string Result, string TestAge);
+
+    bool updatingRouteBrowser;
+
+    void InitializeRouteBrowser()
     {
-        var search = new TextBox { PlaceholderText = "Search by route, region, or source" };
-        AutomationProperties.SetName(search, "Search routes");
-        var list = new ListView { SelectionMode = ListViewSelectionMode.Single, MaxHeight = 320 };
-        AutomationProperties.SetName(list, "Available routes");
-        var empty = new TextBlock { Text = "No routes match your search." };
-        var panel = new StackPanel { Spacing = 12, MinWidth = 300 };
-        panel.Children.Add(search);
-        var favoritesOnly = new CheckBox { Content = "Favorites only" };
-        panel.Children.Add(favoritesOnly);
-        var category = new ComboBox { Header = "Source or route type", ItemsSource = new[] { "All routes", "Game routes", "Download servers", "Imported configs" }, SelectedIndex = 0 };
-        var sort = new ComboBox { Header = "Sort by", ItemsSource = new[] { "Latency", "Packet loss", "Jitter" }, SelectedIndex = Math.Clamp(preferences.RouteSortMetric, 0, 2) };
-        var filters = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 12 };
-        filters.Children.Add(category);
-        filters.Children.Add(sort);
-        panel.Children.Add(filters);
-        panel.Children.Add(list);
-        panel.Children.Add(empty);
-        var dialog = MakeDialog("Choose route", panel, "Use route");
-        list.SelectionChanged += (_, _) => dialog.IsPrimaryButtonEnabled = list.SelectedItem is not null;
-        void Filter()
+        RouteFilter.ItemsSource = new[] { "All sources", "EZConnect games", "Downloads", "Imported configs" };
+        RouteFilter.SelectedIndex = 0;
+        RouteSort.ItemsSource = new[] { "Latency", "Packet loss", "Name" };
+        RouteSort.SelectedIndex = Math.Clamp(preferences.RouteSortMetric, 0, 2);
+        RouteSearch.TextChanged += (_, _) => RefreshRouteBrowser();
+        RouteFilter.SelectionChanged += (_, _) => RefreshRouteBrowser();
+        RouteRegion.SelectionChanged += (_, _) => RefreshRouteBrowser();
+        RouteFavorites.Checked += (_, _) => RefreshRouteBrowser();
+        RouteFavorites.Unchecked += (_, _) => RefreshRouteBrowser();
+        RouteSort.SelectionChanged += (_, _) =>
         {
-            var previous = (list.SelectedItem as ListViewItem)?.Tag as RouteChoice ?? route;
-            list.Items.Clear();
-            var matches = Routes().Where(item =>
-                $"{item.Title} {item.Source} {item.Detail}".Contains(search.Text.Trim(), StringComparison.OrdinalIgnoreCase) &&
-                (favoritesOnly.IsChecked != true || IsFavorite(item))).Where(item => category.SelectedIndex switch
+            preferences = preferences with { RouteSortMetric = RouteSort.SelectedIndex };
+            SavePreferences();
+            RefreshRouteBrowser();
+        };
+        RouteList.SelectionChanged += (_, _) =>
+        {
+            if (updatingRouteBrowser) return;
+            if (busy || Connected || session.NeedsCleanup)
+            {
+                RefreshRouteBrowser();
+                return;
+            }
+            if (RouteList.SelectedItem is not RoutePickerRow row) return;
+            SelectRoute(Routes().FirstOrDefault(choice => choice.Key == row.Key));
+        };
+    }
+
+    void RefreshRouteBrowser()
+    {
+        if (!ready || updatingRouteBrowser) return;
+        updatingRouteBrowser = true;
+        try
+        {
+            var library = Routes().ToArray();
+            string filter = RouteFilter.SelectedItem as string ?? "All sources";
+            string region = RouteRegion.SelectedItem as string ?? "All regions";
+            var regions = new[] { "All regions" }.Concat(library.Select(item => item.Service?.RegionCode)
+                .OfType<string>().Where(code => code.Length > 0)
+                .Distinct(StringComparer.OrdinalIgnoreCase).Order(StringComparer.OrdinalIgnoreCase)).ToArray();
+            if (RouteRegion.ItemsSource is not string[] previous || !previous.SequenceEqual(regions))
+            {
+                RouteRegion.ItemsSource = regions;
+                region = regions.FirstOrDefault(code => code.Equals(region, StringComparison.OrdinalIgnoreCase)) ?? regions[0];
+                RouteRegion.SelectedItem = region;
+            }
+            string query = RouteSearch.Text.Trim();
+            var matches = library.Where(item =>
+                $"{item.Title} {item.Source} {item.Detail}".Contains(query, StringComparison.OrdinalIgnoreCase) &&
+                (region == "All regions" || string.Equals(item.Service?.RegionCode, region, StringComparison.OrdinalIgnoreCase)) &&
+                (RouteFavorites.IsChecked != true || IsFavorite(item))).Where(item => filter switch
                 {
-                    1 => item.Service is { IsDownload: false },
-                    2 => item.Service is { IsDownload: true },
-                    3 => item.Profile is not null,
+                    "EZConnect games" => item.Service is { IsDownload: false },
+                    "Downloads" => item.Service is { IsDownload: true },
+                    "Imported configs" => item.Profile is not null,
                     _ => true
                 });
-            foreach (var choice in matches.OrderBy(item => measurements.GetValueOrDefault(item.Key) is { Succeeded: true } ? 0 : 1)
-                         .ThenBy(item => SortMetric(item, sort.SelectedIndex))
-                         .ThenBy(item => measurements.GetValueOrDefault(item.Key)?.Latency ?? int.MaxValue)
-                         .ThenBy(item => item.Title, StringComparer.OrdinalIgnoreCase))
-            {
-                var row = new StackPanel { Spacing = 3, Margin = new Thickness(0, 6, 0, 6) };
-                row.Children.Add(new TextBlock { Text = IsFavorite(choice) ? $"★ {choice.Title}" : choice.Title, TextWrapping = TextWrapping.Wrap });
-                row.Children.Add(new TextBlock { Text = $"{choice.Source}  ·  {choice.Detail}", FontSize = 12, Opacity = .75, TextWrapping = TextWrapping.Wrap });
-                if (measurements.TryGetValue(choice.Key, out var result))
-                    row.Children.Add(new TextBlock { Text = FormatTest(result), FontSize = 12 });
-                var item = new ListViewItem { Content = row, Tag = choice };
-                AutomationProperties.SetName(item, $"{choice.Title}, {choice.Source}");
-                list.Items.Add(item);
-                if (choice.Key == previous?.Key) list.SelectedItem = item;
-            }
-            empty.Visibility = list.Items.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
-            if (list.SelectedItem is null && list.Items.Count > 0) list.SelectedIndex = 0;
-            dialog.IsPrimaryButtonEnabled = list.SelectedItem is not null;
+            var rows = (RouteSort.SelectedIndex == 2
+                ? matches.OrderBy(item => item.Title, StringComparer.OrdinalIgnoreCase)
+                : matches.OrderBy(item => measurements.GetValueOrDefault(item.Key) is { Succeeded: true } ? 0 : 1)
+                    .ThenBy(item => SortMetric(item, RouteSort.SelectedIndex))
+                    .ThenBy(item => item.Title, StringComparer.OrdinalIgnoreCase))
+                .Select(item =>
+                {
+                    var result = measurements.GetValueOrDefault(item.Key);
+                    return new RoutePickerRow(item.Key, IsFavorite(item) ? $"★ {item.Title}" : item.Title,
+                        $"{item.Source} · {item.Detail}", $"{item.Title}, {item.Source}",
+                        result is null ? "Untested" : FormatTest(result),
+                        result?.TestedAt?.ToLocalTime().ToString("MMM d · HH:mm") ?? "");
+                }).ToArray();
+            if (RouteList.ItemsSource is RoutePickerRow[] previousRows && previousRows.SequenceEqual(rows))
+                rows = previousRows;
+            else RouteList.ItemsSource = rows;
+            var selectedRow = rows.FirstOrDefault(item => item.Key == route?.Key);
+            if (!ReferenceEquals(RouteList.SelectedItem, selectedRow)) RouteList.SelectedItem = selectedRow;
+            RouteFavorites.Content = RouteFavorites.IsChecked == true ? "★" : "☆";
+            string selection = route is null ? "Select a route" : selectedRow is null
+                ? $"Selected route outside filters: {route.Title}" : $"Selected: {route.Title}";
+            RouteListSummary.Text = library.Length == 0 ? "Import a config or sign in to load EZConnect routes."
+                : $"{rows.Length} of {library.Length} routes · {selection}";
+            ToolTipService.SetToolTip(RouteListSummary, RouteListSummary.Text);
+            TestShortlistButton.IsEnabled = rows.Length > 0 && !busy && !Connected && !session.NeedsCleanup;
         }
-        search.TextChanged += (_, _) => Filter();
-        favoritesOnly.Checked += (_, _) => Filter();
-        favoritesOnly.Unchecked += (_, _) => Filter();
-        category.SelectionChanged += (_, _) => Filter();
-        sort.SelectionChanged += (_, _) =>
-        {
-            preferences = preferences with { RouteSortMetric = sort.SelectedIndex };
-            SavePreferences();
-            Filter();
-        };
-        Filter();
-        if (await dialog.ShowAsync() != ContentDialogResult.Primary ||
-            (list.SelectedItem as ListViewItem)?.Tag is not RouteChoice selected) return;
-        route = selected;
-        Refresh();
+        finally { updatingRouteBrowser = false; }
     }
 
     double SortMetric(RouteChoice choice, int sort)
@@ -97,7 +119,6 @@ public sealed partial class MainWindow
         return sort switch
         {
             1 => result.Loss ?? float.PositiveInfinity,
-            2 => result.Jitter ?? float.PositiveInfinity,
             _ => result.Latency ?? int.MaxValue
         };
     }
@@ -121,24 +142,16 @@ public sealed partial class MainWindow
 
     async void PickRunningApp(object sender, RoutedEventArgs args) => await PickRunningApps();
 
-    async Task PickRunningApps(string[]? expected = null)
+    async void PickBackgroundApp(object sender, RoutedEventArgs args) => await PickRunningApps(background: true);
+
+    async Task PickRunningApps(string[]? expected = null, bool background = false)
     {
-        var paths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var process in Process.GetProcesses())
-        {
-            using (process)
-            {
-                try
-                {
-                    if ((expected is not null || process.MainWindowHandle != IntPtr.Zero) && process.MainModule?.FileName is { } path &&
-                        path.EndsWith(".exe", StringComparison.OrdinalIgnoreCase) &&
-                        (expected is null
-                            ? !apps.Contains(path, StringComparer.OrdinalIgnoreCase)
-                            : expected.Any(name => ExecutableMatches(path, name)))) paths.Add(path);
-                }
-                catch (Exception error) when (error is System.ComponentModel.Win32Exception or InvalidOperationException or NotSupportedException) { }
-            }
-        }
+        if (busy || Connected || session.NeedsCleanup) return;
+        var existing = apps.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        string[]? paths = null;
+        await Run("Finding running apps…", async () =>
+            paths = await Task.Run(() => FindRunningApps(existing, expected, background)));
+        if (exitRequested || closing || paths is null) return;
         var list = new ListView { MaxHeight = 310, MinWidth = 290, SelectionMode = ListViewSelectionMode.Multiple };
         foreach (var path in paths.OrderBy(Path.GetFileName, StringComparer.OrdinalIgnoreCase))
         {
@@ -151,11 +164,33 @@ public sealed partial class MainWindow
             Report("No new running apps were found. You can browse for an executable instead.");
             return;
         }
-        var dialog = MakeDialog("Add running apps", list, "Add selected");
+        var dialog = MakeDialog(background ? "Add background processes" : "Add running apps", list, "Add selected");
         dialog.IsPrimaryButtonEnabled = false;
         list.SelectionChanged += (_, _) => dialog.IsPrimaryButtonEnabled = list.SelectedItems.Count > 0;
         if (await dialog.ShowAsync() != ContentDialogResult.Primary) return;
         AddApplications(list.SelectedItems.OfType<ListViewItem>().Select(item => (string)item.Tag));
+    }
+
+    static string[] FindRunningApps(HashSet<string> existing, string[]? expected, bool background)
+    {
+        var names = expected?.Select(Path.GetFileNameWithoutExtension).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var paths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var process in Process.GetProcesses())
+        {
+            using (process)
+            {
+                try
+                {
+                    if (names is null ? (process.MainWindowHandle == IntPtr.Zero) != background : !names.Contains(process.ProcessName))
+                        continue;
+                    if (process.MainModule?.FileName is { } path && path.EndsWith(".exe", StringComparison.OrdinalIgnoreCase) &&
+                        (expected is null ? !existing.Contains(path) : expected.Any(name => ExecutableMatches(path, name))))
+                        paths.Add(path);
+                }
+                catch (Exception error) when (error is System.ComponentModel.Win32Exception or InvalidOperationException or NotSupportedException) { }
+            }
+        }
+        return paths.ToArray();
     }
 
     void AddApplications(IEnumerable<string> selection)
@@ -165,7 +200,7 @@ public sealed partial class MainWindow
         var updated = apps.Concat(chosen).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
         try
         {
-            if (!preview) ProfileStore.SaveApplications(updated);
+            if (!preview) WriteStore("applications", () => ProfileStore.SaveApplications(updated));
             apps.Clear();
             apps.AddRange(updated);
             checkedApps.UnionWith(chosen);
@@ -205,11 +240,10 @@ public sealed partial class MainWindow
             if (imported > 0)
             {
                 var first = updated[profiles.Count];
-                ProfileStore.Save(updated);
+                WriteStore("profiles", () => ProfileStore.Save(updated));
                 profiles.AddRange(updated.Skip(profiles.Count).ToArray());
-                route = Routes().First(item => item.Profile == first);
+                SelectRoute(Routes().First(item => item.Profile == first));
                 AddActivity($"Imported {imported} configuration(s).");
-                Refresh();
             }
             if (failures.Count > 0)
             {
@@ -218,6 +252,18 @@ public sealed partial class MainWindow
             }
         }
         catch (Exception error) { Report(error.Message); }
+    }
+
+    void SelectRoute(RouteChoice? selected)
+    {
+        if (route?.Key == selected?.Key) return;
+        route = selected;
+        if (Scope.SelectedIndex != 1 && selected?.Profile is { Applications.Count: > 0 } profile)
+        {
+            try { LoadProfileApps(profile); }
+            catch (Exception error) { Report($"Could not load the route's saved apps. {error.Message}"); }
+        }
+        Refresh();
     }
 
     static SavedProfile PrepareImport(string config, string baseName, IReadOnlyList<SavedProfile> library)

@@ -1159,6 +1159,12 @@ internal sealed partial class MainForm : Form
 
     void LoadLocalData()
     {
+        try { profiles = ProfileStore.Load(); }
+        catch (Exception error)
+        {
+            profileLibraryUnreadable = true;
+            WriteActivity("Could not load saved profiles. The file will be left untouched. " + error.Message);
+        }
         try
         {
             preferences = ProfileStore.LoadPreferences();
@@ -1177,12 +1183,20 @@ internal sealed partial class MainForm : Form
             routingMode.SelectedIndex = preferences.EntirePcMode ? 1 : 0;
             loadingPreferences = false;
             foreach (var pair in ProfileStore.LoadMeasurements()) measurements[pair.Key] = pair.Value;
-            profiles = ProfileStore.Load();
             foreach (var path in ProfileStore.LoadApplications() ?? profiles.SelectMany(item => item.Applications).Distinct(StringComparer.OrdinalIgnoreCase).ToList())
                 apps.Items.Add(path, true);
         }
         catch (Exception error) { WriteActivity("Could not load local settings. " + error.Message); }
         WriteActivity("RouteFinder is ready. Sign in or import a local profile.");
+    }
+
+    bool profileLibraryUnreadable;
+
+    void SaveProfileLibrary(List<SavedProfile> updated)
+    {
+        if (profileLibraryUnreadable)
+            throw new InvalidOperationException("Saved profiles could not be loaded. Restore a readable copy and restart before editing.");
+        ProfileStore.Save(updated);
     }
 
     void LoadPreview()
@@ -1352,7 +1366,7 @@ internal sealed partial class MainForm : Form
         var actions = Actions();
         var probe = Button("Ping over Windows route");
         actions.Controls.Add(probe);
-        var routeProbe = Button("Ping through selected route");
+        var routeProbe = Button("Test TCP 443 through selected route");
         routeProbe.Enabled = !busy && !connection.HasTunnel && !connection.NeedsCleanup &&
             selected?.Route is { IsDownload: false };
         actions.Controls.Add(routeProbe);
@@ -1403,9 +1417,9 @@ internal sealed partial class MainForm : Form
             {
                 results.Text = "Probing… Close this window to cancel.";
                 await RunTests("Probing the game destination…", async cancellation =>
-                    results.Text = await connection.ProbeGameServerAsync(route, server, portableEngine.Checked, cancellation,
+                    results.Text = (await connection.ProbeDestinationAsync(route, null, server.Address, 443, portableEngine.Checked, cancellation,
                         autoMtu: autoMtu.Checked, tunnelMtu: preferences.TunnelMtu,
-                        keepaliveSeconds: preferences.KeepaliveSeconds, socksProxyOverride: ConfiguredProxy));
+                        keepaliveSeconds: preferences.KeepaliveSeconds, socksProxyOverride: ConfiguredProxy)).Detail);
                 if (results.Text == "Probing… Close this window to cancel.")
                     results.Text = "Probe stopped. See Activity for details.";
             }
@@ -2291,69 +2305,28 @@ internal sealed partial class MainForm : Form
             for (int i = 0; i < list.Items.Count; i++) list.SetItemChecked(i, true);
             dialog.DialogResult = DialogResult.OK;
         });
-        var probeCount = new NumericUpDown
-        {
-            Minimum = 4, Maximum = 30, Value = 4, Width = 62,
-            AccessibleName = "Pings per route"
-        };
-        using var probeInterval = new NumericUpDown
-        {
-            Minimum = 0, Maximum = 5000, Value = 1000, Increment = 100, Width = 72,
-            AccessibleName = "Pause between pings in milliseconds"
-        };
-        using var probeSize = new NumericUpDown
-        {
-            Minimum = 0, Maximum = 1472, Value = 32, Width = 62, AccessibleName = "Ping payload bytes"
-        };
         using var probeTimeout = new NumericUpDown
         {
             Minimum = 100, Maximum = 5000, Value = 1500, Increment = 100, Width = 72,
-            AccessibleName = "Ping timeout in milliseconds"
-        };
-        using var probeTtl = new NumericUpDown
-        {
-            Minimum = 1, Maximum = 255, Value = 128, Width = 62, AccessibleName = "Outgoing ping TTL"
+            AccessibleName = "TCP timeout in milliseconds"
         };
         using var tcpPort = new NumericUpDown
         {
-            Minimum = 0, Maximum = 65535, Width = 72, AccessibleName = "TCP port or zero for ping"
+            Minimum = 1, Maximum = 65535, Value = 443, Width = 72, AccessibleName = "TCP port"
         };
         if (destination is not null)
         {
-            actions.Controls.Add(Label("Pings per route", 9));
-            actions.Controls.Add(probeCount);
-            actions.Controls.Add(Label("TTL", 9));
-            actions.Controls.Add(probeTtl);
-            actions.SetFlowBreak(probeTtl, true);
-            actions.Controls.Add(Label("Pause between pings (ms)", 9));
-            actions.Controls.Add(probeInterval);
-            actions.Controls.Add(Label("Bytes", 9));
-            actions.Controls.Add(probeSize);
+            hint.Text = "Choose routes to compare with one TCP connection attempt each.";
             actions.Controls.Add(Label("Timeout (ms)", 9));
             actions.Controls.Add(probeTimeout);
-            actions.SetFlowBreak(probeTimeout, true);
-            actions.Controls.Add(Label("TCP port (0 for ping)", 9));
+            actions.Controls.Add(Label("TCP port", 9));
             actions.Controls.Add(tcpPort);
-            tcpPort.ValueChanged += (_, _) =>
-            {
-                bool isPing = tcpPort.Value == 0;
-                probeCount.Enabled = isPing;
-                probeInterval.Enabled = isPing;
-                probeSize.Enabled = isPing;
-                probeTtl.Enabled = isPing;
-                hint.Text = isPing
-                    ? "Choose routes to compare with ICMP ping."
-                    : "Choose routes to compare with one TCP connection attempt each.";
-            };
         }
-        else probeCount.Dispose();
         layout.Controls.Add(actions, 0, 2);
         dialog.Controls.Add(layout);
         if (dialog.ShowDialog(this) != DialogResult.OK) return;
         var chosen = list.CheckedIndices.Cast<int>().Select(index => choices[index]).ToList();
-        int pingCount = destination is null ? 4 : (int)probeCount.Value;
-        int pingInterval = (int)probeInterval.Value;
-        int? comparisonPort = tcpPort.Value == 0 ? null : (int)tcpPort.Value;
+        int comparisonPort = (int)tcpPort.Value;
         if (destination is not null) Navigate(routePage);
         var summaries = new List<string>();
         var probeDetails = new List<string>();
@@ -2364,22 +2337,13 @@ internal sealed partial class MainForm : Form
             if (destination is not null)
             {
                 traffic.Text = $"Measuring Windows route to {destination.Address}…";
-                baseline = comparisonPort is int port
-                    ? await MeasureTcpBaselineAsync(port)
-                    : await Diagnostics.MeasurePing(destination.Address.ToString(), pingCount,
-                    cancellation: cancellation, intervalMilliseconds: pingInterval,
-                    payloadBytes: (int)probeSize.Value, timeoutMilliseconds: (int)probeTimeout.Value,
-                    ttl: (int)probeTtl.Value);
-                summaries.Add($"Windows baseline · {(comparisonPort.HasValue ? baseline.Detail : baseline.Summary)}");
+                var tcp = await Diagnostics.MeasureTcp(destination.Address.ToString(), comparisonPort,
+                    cancellation, (int)probeTimeout.Value);
+                baseline = new PingReport(tcp.Detail, Tcp: tcp);
+                summaries.Add($"Windows baseline · {baseline.Detail}");
                 probeDetails.Add($"Windows baseline{Environment.NewLine}{baseline.Detail}");
                 WriteActivity($"Windows baseline • {destination.Address}{Environment.NewLine}{baseline.Detail}");
 
-                async Task<PingReport> MeasureTcpBaselineAsync(int targetPort)
-                {
-                    var tcp = await Diagnostics.MeasureTcp(destination.Address.ToString(), targetPort,
-                        cancellation, (int)probeTimeout.Value);
-                    return new PingReport(tcp.Detail, Tcp: tcp);
-                }
             }
             int unavailable = 0;
             int lastRetriedIndex = -1;
@@ -2400,9 +2364,8 @@ internal sealed partial class MainForm : Form
                     if (destination is not null)
                     {
                         var report = await connection.ProbeDestinationAsync(choice.Route, choice.Local(),
-                            destination.Address, portableEngine.Checked, cancellation, pingCount, pingInterval,
-                            (int)probeSize.Value, (int)probeTimeout.Value, (int)probeTtl.Value,
-                            autoMtu.Checked, preferences.TunnelMtu, preferences.KeepaliveSeconds, comparisonPort,
+                            destination.Address, comparisonPort, portableEngine.Checked, cancellation,
+                            (int)probeTimeout.Value, autoMtu.Checked, preferences.TunnelMtu, preferences.KeepaliveSeconds,
                             ConfiguredProxy);
                         summaries.Add($"{choice.Region} · {choice.Title} · {report.Summary}" +
                             (baseline is null ? "" : report.CompareWith(baseline)));
@@ -2506,9 +2469,8 @@ internal sealed partial class MainForm : Form
                     [
                         heading,
                         $"Recorded {DateTimeOffset.Now:O}",
-                        comparisonPort is int port ? $"TCP port {port} · One connection attempt per route · Timeout {probeTimeout.Value} ms" :
-                            destination is null ? "Standard WireSock route tests" :
-                            $"Pings {pingCount} · Pause {pingInterval} ms · Payload {probeSize.Value} bytes · Timeout {probeTimeout.Value} ms · TTL {probeTtl.Value}",
+                        destination is null ? "Standard WireSock route tests" :
+                            $"TCP port {comparisonPort} · One connection attempt per route · Timeout {probeTimeout.Value} ms",
                         "",
                         report,
                         "",
@@ -2627,6 +2589,7 @@ internal sealed partial class MainForm : Form
     }
 
     bool nativeTunnelStopped;
+    string? lastStatusError;
 
     void UpdateConnection()
     {
@@ -2642,6 +2605,7 @@ internal sealed partial class MainForm : Form
                 return;
             }
             var state = connection.State;
+            lastStatusError = null;
             if (state is { } stats)
             {
                 bool handshake = connection.PeerResponseObserved || stats.TimeSinceLastHandshakeMilliseconds >= 0 || stats.RxBytes > 0;
@@ -2671,7 +2635,16 @@ internal sealed partial class MainForm : Form
                 if (!Visible && !connection.NeedsCleanup) { Show(); WindowState = FormWindowState.Normal; }
             }
         }
-        catch (Exception error) { timer.Stop(); WriteActivity("Could not read tunnel status. " + error.Message); }
+        catch (Exception error)
+        {
+            banner.Text = "Status unavailable";
+            traffic.Text = "Retrying WireSock status.";
+            if (lastStatusError != error.Message)
+            {
+                lastStatusError = error.Message;
+                WriteActivity("Could not read tunnel status. " + error.Message);
+            }
+        }
     }
 
     static string FormatBytes(ulong bytes) => bytes >= 1024 * 1024 ? $"{bytes / (1024.0 * 1024):0.0} MB" : $"{bytes / 1024.0:0.0} KB";
@@ -2786,7 +2759,7 @@ internal sealed partial class MainForm : Form
         int imported = updated.Count - profiles.Count;
         if (imported > 0)
         {
-            try { ProfileStore.Save(updated); }
+            try { SaveProfileLibrary(updated); }
             catch (Exception error) { ShowMessage(error.Message); return; }
             profiles = updated;
             routeCategory.SelectedIndex = 3;
@@ -2814,7 +2787,7 @@ internal sealed partial class MainForm : Form
         var updated = profiles.Select(item => item == profile ? replacement : item).ToList();
         try
         {
-            ProfileStore.Save(updated);
+            SaveProfileLibrary(updated);
             profiles = updated;
             PopulateRoutes();
             WriteActivity($"Saved {replacement.Applications.Count} checked app(s) to {profile.Name}.");
@@ -2850,7 +2823,7 @@ internal sealed partial class MainForm : Form
                 TunnelProfile.Parse(config.Text, profile.Name);
                 var updated = profiles.Select(item => item == profile
                     ? new SavedProfile { Name = item.Name, Configuration = config.Text, Applications = item.Applications } : item).ToList();
-                ProfileStore.Save(updated);
+                SaveProfileLibrary(updated);
                 profiles = updated;
                 measurements.Remove("local:" + profile.Name);
                 PopulateRoutes();
@@ -2871,7 +2844,7 @@ internal sealed partial class MainForm : Form
         try
         {
             var updated = profiles.Where(item => item != profile).ToList();
-            ProfileStore.Save(updated);
+            SaveProfileLibrary(updated);
             profiles = updated;
             measurements.Remove("local:" + profile.Name);
             PopulateRoutes();

@@ -17,6 +17,8 @@ Preview mode uses sample routes and simulates connecting and disconnecting. A no
 
 Open RouteFinder with **Run as administrator** to enable WireSock tunnel tests and connections. In **What to route**, select apps or switch to **Entire PC**. In **Where to connect**, import a local config or add an optional EZConnect account, then choose a route from the library. You can test routes before using **Connect**. Entire PC mode uses the profile's default route for all applications; service routes include IPv6 when the route advertises IPv6, and imported profiles must contain `0.0.0.0/0`. The connection card distinguishes a started tunnel from a completed peer handshake and shows traffic counters.
 
+Choose **Selected apps only** in **What to route** to turn on WireSock’s network lock for that connection. Checked apps use the tunnel and other apps lose network access while connected. This mode disables direct LAN and destination bypasses. Disconnect to restore normal access. Routing presets can save this mode.
+
 **Settings** includes ICMP-based Auto MTU optimization, a WireSock kill switch, the virtual adapter, an optional DNS override, and an option to bypass local IPv4 networks. **Advanced tools** contains the IPv6 adapter binding control, which requires administrator access and may briefly reconnect active adapters. Auto MTU keeps the profile's MTU if no probe target responds. In selected-app mode, the kill switch blocks traffic from other apps while connected. Saved test results, route favorites, and connection settings are encrypted for the current Windows user.
 
 Use **Import config** to work with a local WireGuard or supported Amnezia file without signing in. Use **Route options** to edit, export, or remove an imported profile. Profiles are encrypted for the current Windows user in `%LOCALAPPDATA%\RouteFinder\profiles.dat`. App selections are stored separately. The optional remembered sign-in stores an encrypted refresh token. Disconnecting releases the allocated service session.
@@ -39,7 +41,15 @@ For a signed release, add `-SigningThumbprint <thumbprint>` and, if needed, `-Si
 
 ## Current coverage
 
-RouteFinder includes account sign-in with optional Windows-user protected refresh-token saving, a searchable route library, sequential route comparison, executable selection, running game discovery, local profile import, and live connection status. Tests use a temporary WireSock tunnel and check for a WireGuard handshake, estimated packet loss, RTT, average inter-sample jitter, RTT spread, and a separately labeled TCP reachability check. Those metrics come from local WireSock observations and do not implement the original EZwire server-assisted route tests.
+RouteFinder includes account sign-in with optional Windows-user protected refresh-token saving, a searchable route library, sequential route comparison, executable selection, running game discovery, local profile import, and live connection status. Standard route tests use a temporary WireSock tunnel and report the peer handshake, the SDK's estimated packet loss and RTT when available, and a separately labeled TCP reachability check. Destination comparisons use a TCP probe scoped to RouteFinder and the destination IP. ICMP pings use the existing Windows route. These tests use local observations rather than EZwire's server-assisted route tests.
+
+### Live per-app check
+
+Use **Verify routing** in the live connection panel to record and compare the readings. RouteFinder keeps those readings in the current window only.
+
+With other VPN clients disconnected, run RouteFinder as administrator and open two different browsers. Record both public IPs before connecting. Select just one browser in RouteFinder and connect it to a known working route with a distinct exit IP. Open a fresh connection in each browser. The selected browser should show the route's exit IP and the unselected browser should still show its original IP. Disconnect and repeat the check to confirm both browsers return to the original path and RouteFinder shows no pending cleanup.
+
+Save a route and traffic scope under **Presets**. Applying a preset restores the selection for review before you connect. To test a shortlist, filter the route library by search, region, source, or favorites, then choose **Test filtered routes** from the route tools menu.
 
 For EZConnect session JSON imports, include the original configuration object and supply the corresponding private key when prompted. For JSON with multiple routes, set `route_name` to the intended route's exact name. The relay must still authorize the profile.
 

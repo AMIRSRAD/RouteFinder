@@ -46,7 +46,7 @@ public sealed partial class MainWindow
         var favorites = preferences.Favorites.Where(key => !key.Equals(choice.Key, StringComparison.OrdinalIgnoreCase)).ToList();
         if (!IsFavorite(choice)) favorites.Add(choice.Key);
         var updated = preferences with { Favorites = favorites };
-        if (!preview) ProfileStore.SavePreferences(updated);
+        if (!preview) WriteStore("preferences", () => ProfileStore.SavePreferences(updated));
         preferences = updated;
         AddActivity($"{choice.Title} · {(IsFavorite(choice) ? "Added to favorites" : "Removed from favorites")}");
     }
@@ -55,7 +55,7 @@ public sealed partial class MainWindow
     {
         var updated = new Dictionary<string, RouteTestResult>(measurements, StringComparer.Ordinal);
         updated.Remove(choice.Key);
-        if (!preview) ProfileStore.SaveMeasurements(updated);
+        if (!preview) WriteStore("test results", () => ProfileStore.SaveMeasurements(updated));
         measurements.Remove(choice.Key);
         Refresh();
     }
@@ -91,7 +91,7 @@ public sealed partial class MainWindow
         var replacement = new SavedProfile { Name = profile.Name, Configuration = config, Applications = paths };
         var updated = profiles.ToList();
         updated[index] = replacement;
-        ProfileStore.Save(updated);
+        WriteStore("profiles", () => ProfileStore.Save(updated));
         profiles[index] = replacement;
         route = Routes().First(choice => choice.Profile == replacement);
         Refresh();
@@ -102,13 +102,14 @@ public sealed partial class MainWindow
     {
         var saved = profile.Applications ?? [];
         var updated = apps.Concat(saved).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
-        ProfileStore.SaveApplications(updated.ToList());
+        if (!preview && updated.Length != apps.Count)
+            WriteStore("applications", () => ProfileStore.SaveApplications(updated.ToList()));
         apps.Clear();
         apps.AddRange(updated);
         checkedApps.Clear();
         checkedApps.UnionWith(saved);
         SaveAppSelection();
-        Scope.SelectedIndex = 0;
+        if (Scope.SelectedIndex == 1) Scope.SelectedIndex = 0;
         RenderApps();
         Refresh();
     }
@@ -135,7 +136,7 @@ public sealed partial class MainWindow
         var confirm = MakeDialog("Remove configuration",
             new TextBlock { Text = $"Remove {profile.Name} from RouteFinder?", TextWrapping = TextWrapping.Wrap }, "Remove");
         if (await confirm.ShowAsync() != ContentDialogResult.Primary) return;
-        ProfileStore.Save(profiles.Where(item => item != profile).ToList());
+        WriteStore("profiles", () => ProfileStore.Save(profiles.Where(item => item != profile).ToList()));
         profiles.Remove(profile);
         route = Routes().FirstOrDefault();
         Refresh();

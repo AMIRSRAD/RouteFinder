@@ -12,22 +12,31 @@ public sealed partial class MainWindow
 {
     readonly Dictionary<string, RouteTestResult> measurements = new(StringComparer.Ordinal);
     CancellationTokenSource? activeTest;
+    long serviceCooldownStarted;
+    TimeSpan serviceCooldown;
 
     static string FormatTest(RouteTestResult result) => result.ProfileUnavailable ? "Route unavailable" :
         !result.Succeeded ? "No peer response" :
         $"{(result.Latency is int latency ? $"{latency} ms" : "Peer responded")}" +
-        (result.Loss is float loss ? $" · {loss:0.#}% est. loss" : "") +
-        (result.Jitter is float jitter ? $" · {jitter:0.#} ms jitter" : "");
+        (result.Loss is float loss ? $" · {loss:0.#}% est. loss" : "");
 
     async void TestSelectedRoute(object sender, RoutedEventArgs args)
     {
-        if (activeTest is { } test)
+        if (activeTest is not null)
         {
-            test.Cancel();
-            Refresh();
+            CancelActiveTest();
             return;
         }
         if (route is { } selected) await RunRouteTests([selected]);
+    }
+
+    void CancelActiveTest()
+    {
+        if (activeTest is not { IsCancellationRequested: false } test) return;
+        test.Cancel();
+        ConnectionTitle.Text = "Canceling test…";
+        ConnectionDetail.Text = "Finishing any pending EZConnect request and releasing the test tunnel.";
+        Refresh();
     }
 
     async void CompareRoutes(object sender, RoutedEventArgs args)
@@ -46,6 +55,26 @@ public sealed partial class MainWindow
         var dialog = MakeDialog("Test all routes", details, "Start tests");
         if (await dialog.ShowAsync() == ContentDialogResult.Primary)
             await RunRouteTests(choices);
+    }
+
+    RouteChoice[] FilteredRouteChoices()
+    {
+        var library = Routes().DistinctBy(choice => choice.Key, StringComparer.Ordinal)
+            .ToDictionary(choice => choice.Key, StringComparer.Ordinal);
+        return RouteList.Items.OfType<RoutePickerRow>().Where(row => library.ContainsKey(row.Key))
+            .Select(row => library[row.Key]).ToArray();
+    }
+
+    async void TestShortlist(object sender, RoutedEventArgs args)
+    {
+        var choices = FilteredRouteChoices();
+        if (busy || Connected || session.NeedsCleanup || choices.Length == 0) return;
+        var dialog = MakeDialog("Test filtered routes", new TextBlock
+        {
+            Text = $"Test the {choices.Length} routes shown in the library? Search, region, source, and favorites filters all apply.",
+            TextWrapping = TextWrapping.Wrap
+        }, "Start tests");
+        if (await dialog.ShowAsync() == ContentDialogResult.Primary) await RunRouteTests(choices);
     }
 
     async Task<RouteChoice[]> ChooseRoutes(string title, IEnumerable<RouteChoice> choices, int minimum)
@@ -69,6 +98,9 @@ public sealed partial class MainWindow
     {
         var summaries = await CollectRouteTests(choices);
         if (exitRequested || summaries.Count == 0) return;
+        if (choices.Length == 1 && measurements.TryGetValue(choices[0].Key, out var result) &&
+            summaries.Count == 1 && summaries[0].StartsWith($"{choices[0].Title} · {FormatTest(result)}", StringComparison.Ordinal))
+            return;
         var results = new TextBox { Text = string.Join("\n\n", summaries), TextWrapping = TextWrapping.Wrap,
             AcceptsReturn = true, IsReadOnly = true, MinHeight = 140, MaxHeight = 360 };
         var dialog = MakeDialog("Route test results", results, preview ? "" : "Export results");
@@ -87,7 +119,6 @@ public sealed partial class MainWindow
         {
             await Run("Testing routes…", async () =>
             {
-                long? lastServiceAttempt = null;
                 try
                 {
                     foreach (var choice in choices)
@@ -96,26 +127,23 @@ public sealed partial class MainWindow
                         ConnectionDetail.Text = $"{summaries.Count + 1} of {choices.Length} · {choice.Title}";
                         try
                         {
-                            if (!preview && choice.Service is not null && lastServiceAttempt is long previous)
-                            {
-                                var delay = TimeSpan.FromSeconds(10) - Stopwatch.GetElapsedTime(previous);
-                                if (delay > TimeSpan.Zero) await Task.Delay(delay, token);
-                            }
                             var result = await MeasureRoute(choice, token);
                             measurements[choice.Key] = result with { TestedAt = DateTimeOffset.UtcNow };
-                            if (!preview) ProfileStore.SaveMeasurements(measurements);
+                            if (!preview && !unavailableStores.Contains("test results"))
+                                await Task.Run(() => ProfileStore.SaveMeasurements(measurements));
                             var details = FormatTest(result);
                             if (result.TcpReached is bool reached)
                                 details += reached ? " · TCP reached port 443; path unverified" : " · TCP probe did not connect";
                             Record($"{choice.Title} · {details}");
                         }
+                        catch (EzConnectServiceException error) when (error.StatusCode == 429)
+                        {
+                            Record($"Stopped at {choice.Title} · {error.Message} Completed results were kept.");
+                            break;
+                        }
                         catch (Exception error) when (error is not OperationCanceledException && !session.NeedsCleanup)
                         {
                             Record($"{choice.Title} · {error.Message}");
-                        }
-                        finally
-                        {
-                            if (choice.Service is not null) lastServiceAttempt = Stopwatch.GetTimestamp();
                         }
                     }
                 }
@@ -151,23 +179,40 @@ public sealed partial class MainWindow
         if (preview)
         {
             await Task.Delay(350, cancellation);
-            return new RouteTestResult("Preview", true, choice.Service is null ? 42 : 54, 3, Loss: 0, Jitter: 2);
+            return new RouteTestResult("Preview", true, choice.Service is null ? 42 : 54, 3, Loss: 0);
         }
         var local = choice.Profile is { } profile ? TunnelProfile.Parse(profile.Configuration, profile.Name) : null;
-        try
+        return await RunPacedProbe(choice, () => session.TestAsync(choice.Service, local, cancellation,
+            preferences.PortableEngine, preferences.DnsOverride, preferences.AutoMtu, preferences.TunnelMtu,
+            preferences.KeepaliveSeconds, preferences.RouteTestSeconds, ConfiguredProxy), cancellation);
+    }
+
+    async Task<T> RunPacedProbe<T>(RouteChoice choice, Func<Task<T>> probe, CancellationToken cancellation)
+    {
+        if (choice.Service is null) return await probe();
+
+        for (int attempt = 0; ; attempt++)
         {
-            return await session.TestAsync(choice.Service, local, cancellation, preferences.PortableEngine,
-                preferences.DnsOverride, preferences.AutoMtu, preferences.TunnelMtu, preferences.KeepaliveSeconds,
-                preferences.RouteTestSeconds, ConfiguredProxy);
-        }
-        catch (EzConnectServiceException error) when (error.StatusCode == 429 && !session.NeedsCleanup &&
-            (error.RetryAfter ?? TimeSpan.FromSeconds(30)) <= TimeSpan.FromMinutes(5))
-        {
-            ConnectionDetail.Text = $"{choice.Title} · Waiting for EZConnect cooldown";
-            await Task.Delay(error.RetryAfter ?? TimeSpan.FromSeconds(30), cancellation);
-            return await session.TestAsync(choice.Service, local, cancellation, preferences.PortableEngine,
-                preferences.DnsOverride, preferences.AutoMtu, preferences.TunnelMtu, preferences.KeepaliveSeconds,
-                preferences.RouteTestSeconds, ConfiguredProxy);
+            cancellation.ThrowIfCancellationRequested();
+            var remaining = serviceCooldown - Stopwatch.GetElapsedTime(serviceCooldownStarted);
+            if (remaining > TimeSpan.FromMinutes(5))
+                throw new EzConnectServiceException($"EZConnect cooldown has {Math.Ceiling(remaining.TotalMinutes)} minutes remaining.", 429);
+            if (remaining > TimeSpan.Zero)
+            {
+                string progress = ConnectionDetail.Text;
+                ConnectionDetail.Text = $"{progress} · EZConnect cooldown: {Math.Ceiling(remaining.TotalSeconds)} s";
+                try { await Task.Delay(remaining, cancellation); }
+                finally { if (!cancellation.IsCancellationRequested) ConnectionDetail.Text = progress; }
+            }
+
+            try { return await probe(); }
+            catch (EzConnectServiceException error) when (error.StatusCode == 429)
+            {
+                serviceCooldownStarted = Stopwatch.GetTimestamp();
+                var retry = error.RetryAfter ?? TimeSpan.FromSeconds(30);
+                serviceCooldown = retry > TimeSpan.Zero ? retry : TimeSpan.Zero;
+                if (attempt > 0 || session.NeedsCleanup || serviceCooldown > TimeSpan.FromMinutes(5)) throw;
+            }
         }
     }
 }

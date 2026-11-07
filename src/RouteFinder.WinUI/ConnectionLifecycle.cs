@@ -2,6 +2,8 @@ using System.Diagnostics;
 using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Media;
+using Windows.Foundation;
 using Forms = System.Windows.Forms;
 
 namespace RouteFinder.WinUI;
@@ -22,7 +24,30 @@ public sealed partial class MainWindow
     Forms.ContextMenuStrip? trayMenu;
     Forms.ToolStripItem? trayDisconnect;
     Forms.ToolStripItem? trayReconnect;
+    readonly Queue<int> peerRttHistory = new();
+    long? lastRttSample;
     System.Drawing.Icon? applicationIcon;
+
+    bool WindowCanRenderTelemetry => !hiddenInTray &&
+        AppWindow.Presenter is not OverlappedPresenter { State: OverlappedPresenterState.Minimized };
+
+    void UpdatePolling()
+    {
+        bool visibleTelemetry = !closing && session.HasTunnel && WindowCanRenderTelemetry;
+        bool backgroundWork = armed is not null ||
+            preferences.RecoverStoppedTunnel && session.HasTunnel && !recoveryAttempted;
+        if (preview || busy || closing || exitRequested || !visibleTelemetry && !backgroundWork)
+        {
+            if (timer.IsEnabled) timer.Stop();
+            return;
+        }
+
+        var interval = TimeSpan.FromSeconds(visibleTelemetry ? 1 : 3);
+        if (timer.IsEnabled && timer.Interval == interval) return;
+        if (timer.IsEnabled) timer.Stop();
+        timer.Interval = interval;
+        timer.Start();
+    }
 
     void InitializeTray()
     {
@@ -58,6 +83,12 @@ public sealed partial class MainWindow
                 UpdateTray();
                 AppWindow.Hide();
             }
+            if (change.DidSizeChange || change.DidVisibilityChange) UpdatePolling();
+        };
+        Activated += (_, args) =>
+        {
+            if (args.WindowActivationState == WindowActivationState.Deactivated) return;
+            UpdatePolling();
         };
     }
 
@@ -69,6 +100,8 @@ public sealed partial class MainWindow
         if (AppWindow.Presenter is OverlappedPresenter { State: OverlappedPresenterState.Minimized } presenter)
             presenter.Restore();
         Activate();
+        UpdateStatus();
+        UpdatePolling();
         UpdateTray();
     }
 
@@ -83,66 +116,97 @@ public sealed partial class MainWindow
         trayReconnect!.Enabled = !busy && session.HasTunnel;
     }
 
-    async void OpenConnectionOptions(object sender, RoutedEventArgs args)
+    void OpenConnectionOptions(object sender, RoutedEventArgs args)
     {
-        var actions = new List<(string Label, Func<Task> Run)>();
-        if (Connected)
-        {
-            actions.Add(("Connection details", ShowConnectionDetails));
-            actions.Add(("Reconnect", () => Reconnect()));
-            actions.Add(("Probe a destination over the current Windows route", ProbeConnectedDestination));
-            if (!preview) actions.Add(("Reset tunnel TCP connections", ResetTunnelTcp));
-            if (watchOwnsTunnel)
-                actions.Add((holdTunnel ? "Resume automatic idle disconnect" : "Hold tunnel open", () =>
-                {
-                    holdTunnel = !holdTunnel;
-                    idleSince = null;
-                    UpdateTray();
-                    return Task.CompletedTask;
-                }));
-        }
-        else if (session.NeedsCleanup) actions.Add(("Retry connection cleanup", () => ChangeConnection()));
-        else
-        {
-            actions.Add((armed is null ? "Connect when selected apps launch" : "Stop watching for app launches", () =>
-            {
-                ToggleWatch();
-                return Task.CompletedTask;
-            }));
-            actions.Add(("Mobile hotspot and console setup", OpenHotspot));
-        }
-        var options = new ListView { SelectionMode = ListViewSelectionMode.Single, MinWidth = 310 };
-        foreach (var action in actions) options.Items.Add(action.Label);
-        options.SelectedIndex = 0;
-        var dialog = MakeDialog("Connection options", options, "Continue");
-        options.SelectionChanged += (_, _) => dialog.IsPrimaryButtonEnabled = options.SelectedIndex >= 0;
-        if (await dialog.ShowAsync() == ContentDialogResult.Primary && options.SelectedIndex >= 0)
-            await actions[options.SelectedIndex].Run();
+        InlineConnectionActions.Visibility = InlineConnectionActions.Visibility == Visibility.Visible
+            ? Visibility.Collapsed : Visibility.Visible;
+        RefreshConnectionActions();
     }
 
-    async Task ShowConnectionDetails()
+    void RefreshConnectionActions()
     {
-        var details = new List<string> { ConnectionTitle.Text, ConnectionDetail.Text };
-        if (!preview)
+        bool connected = Connected;
+        bool available = !connected && !session.NeedsCleanup;
+        ReconnectInline.Visibility = connected ? Visibility.Visible : Visibility.Collapsed;
+        HoldInline.Visibility = connected && watchOwnsTunnel ? Visibility.Visible : Visibility.Collapsed;
+        ProbeInline.Visibility = connected ? Visibility.Visible : Visibility.Collapsed;
+        ResetInline.Visibility = connected && !preview ? Visibility.Visible : Visibility.Collapsed;
+        WatchInline.Visibility = available ? Visibility.Visible : Visibility.Collapsed;
+        HotspotInline.Visibility = available ? Visibility.Visible : Visibility.Collapsed;
+        WatchInline.Content = armed is null ? "Watch apps" : "Stop watching";
+        HoldInline.Content = holdTunnel ? "Resume idle disconnect" : "Hold open";
+        InlineConnectionActions.IsHitTestVisible = !busy;
+        foreach (var action in InlineConnectionActions.Children.OfType<Button>()) action.IsEnabled = !busy;
+    }
+
+    void RenderTelemetry(int? rtt, float? loss, ulong received, ulong sent, string? rate, string peer)
+    {
+        LiveRtt.Text = rtt is int ms ? $"{ms} ms" : "—";
+        RecordRtt(rtt, Stopwatch.GetTimestamp());
+        LiveLoss.Text = loss is float percent ? $"{percent:0.#}%" : "—";
+        LiveUsage.Text = Connected ? $"↓ {FormatBytes(received)}  ↑ {FormatBytes(sent)}" +
+            (rate is null ? "" : $" · {rate}") : "Connect to see tunnel traffic.";
+        LivePeer.Text = peer;
+        LivePeer.Visibility = peer.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
+        ToolTipService.SetToolTip(LivePeer, peer);
+    }
+
+    void RecordRtt(int? rtt, long now)
+    {
+        if (rtt is not int ms)
         {
-            if (connectedEndpoint is not null) details.Add($"Endpoint · {connectedEndpoint}");
-            details.Add($"Mode · {(connectedForConsole ? "Console or hotspot" : Scope.SelectedIndex == 1 ? "Entire PC" : "Selected apps")}");
-            details.Add($"Uptime · {DateTimeOffset.UtcNow - connectedAt:hh\\:mm\\:ss}");
-            details.AddRange(session.ActiveRoutingDetails);
-            if (session.ActiveMtu is { } mtu) details.Add($"MTU · {mtu}");
-            if (session.ActiveKeepalive is { } keepalive) details.Add($"Keepalive · {keepalive}");
-            if (session.ActiveProxyStatus is { } proxy) details.Add($"SOCKS5 · {proxy}");
-            if (session.ActiveTunnelError is uint error) details.Add($"WireSock error · 0x{error:X8}");
-            if (session.State is { } sample)
-            {
-                details.Add(sample.TimeSinceLastHandshakeMilliseconds < 0 ? "Handshake · Not reported"
-                    : $"Handshake · {sample.TimeSinceLastHandshakeMilliseconds / 1000}s ago");
-                if (sample.RxBytes > 0 && float.IsFinite(sample.EstimatedLoss) && sample.EstimatedLoss is >= 0 and <= 100)
-                    details.Add($"Estimated loss · {sample.EstimatedLoss:0.#}%");
-            }
+            peerRttHistory.Clear();
+            lastRttSample = null;
+            LiveVariation.Text = "—";
+            LatencyTrend.Visibility = Visibility.Collapsed;
+            return;
         }
-        var text = new TextBox { Text = string.Join("\n", details), IsReadOnly = true, AcceptsReturn = true, TextWrapping = TextWrapping.Wrap, MaxHeight = 320 };
-        await MakeDialog("Connection details", text).ShowAsync();
+        if (lastRttSample is long previous && Stopwatch.GetElapsedTime(previous, now).TotalSeconds < 0.9) return;
+        lastRttSample = now;
+        peerRttHistory.Enqueue(ms);
+        if (peerRttHistory.Count > 30) peerRttHistory.Dequeue();
+        if (peerRttHistory.Count < 2) return;
+
+        int minimum = int.MaxValue;
+        int maximum = int.MinValue;
+        int? previousRtt = null;
+        double totalVariation = 0;
+        foreach (int value in peerRttHistory)
+        {
+            minimum = Math.Min(minimum, value);
+            maximum = Math.Max(maximum, value);
+            if (previousRtt is int prior) totalVariation += Math.Abs((double)value - prior);
+            previousRtt = value;
+        }
+        int segments = peerRttHistory.Count - 1;
+        double variation = totalVariation / segments;
+        LiveVariation.Text = $"{variation:0.#} ms";
+        double range = Math.Max(5.0, maximum - (double)minimum);
+        if (minimum == maximum && LiveVariation.Text == "0 ms" && LatencyTrend.Points?.Count == peerRttHistory.Count &&
+            LatencyTrend.Points.All(point => point.Y == 18)) return;
+        var points = new PointCollection();
+        int index = 0;
+        foreach (int value in peerRttHistory)
+        {
+            points.Add(new Point(2 + index * 90.0 / segments, 18 - (value - minimum) * 16 / range));
+            index++;
+        }
+        LatencyTrend.Points = points;
+        LatencyTrend.Visibility = Visibility.Visible;
+    }
+
+    async void ReconnectFromPanel(object sender, RoutedEventArgs args) => await Reconnect();
+    async void HotspotFromPanel(object sender, RoutedEventArgs args) => await OpenHotspot();
+    async void ResetFromPanel(object sender, RoutedEventArgs args) => await ResetTunnelTcp();
+    async void ProbeFromPanel(object sender, RoutedEventArgs args) => await ProbeConnectedDestination();
+    void WatchFromPanel(object sender, RoutedEventArgs args) => ToggleWatch();
+
+    void HoldFromPanel(object sender, RoutedEventArgs args)
+    {
+        if (busy || !watchOwnsTunnel) return;
+        holdTunnel = !holdTunnel;
+        idleSince = null;
+        Refresh();
     }
 
     async Task ResetTunnelTcp()
@@ -204,7 +268,7 @@ public sealed partial class MainWindow
     {
         if (armed is not null) { CancelWatch(); Refresh(); return; }
         if (busy || Connected || session.NeedsCleanup || preview) return;
-        if (route is null || Scope.SelectedIndex != 0 || checkedApps.Count == 0)
+        if (route is null || Scope.SelectedIndex == 1 || checkedApps.Count == 0)
         {
             Report("Choose a route and check at least one executable in Selected apps mode.");
             return;
@@ -240,6 +304,8 @@ public sealed partial class MainWindow
             if (wasWatched && !watchOwnsTunnel) CancelWatch();
         }
         if (!automatic) recoveryAttempted = false;
+        reconnectFailed = !session.HasTunnel || session.NeedsCleanup;
+        if (reconnectFailed) AddActivity("The reconnect did not restore a tunnel.");
         Refresh();
     }
 

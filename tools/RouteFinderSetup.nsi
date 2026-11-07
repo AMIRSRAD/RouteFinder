@@ -58,6 +58,7 @@ Section "RouteFinder"
     ${EndIf}
     WriteUninstaller "$INSTDIR\Uninstall.exe"
     CreateShortCut "$SMPROGRAMS\RouteFinder.lnk" "$INSTDIR\${InstalledApp}" "" "$INSTDIR\${InstalledApp}" 0
+    CreateShortCut "$DESKTOP\RouteFinder.lnk" "$INSTDIR\${InstalledApp}" "" "$INSTDIR\${InstalledApp}" 0
     WriteRegStr HKLM "${UninstallKey}" "DisplayName" "RouteFinder"
     WriteRegStr HKLM "${UninstallKey}" "DisplayVersion" "${AppVersion}"
     WriteRegStr HKLM "${UninstallKey}" "InstallLocation" "$INSTDIR"
@@ -82,6 +83,7 @@ Section "Uninstall"
         RMDir "$INSTDIR\app"
     !endif
     Delete "$SMPROGRAMS\RouteFinder.lnk"
+    Delete "$DESKTOP\RouteFinder.lnk"
     Delete "$INSTDIR\Uninstall.exe"
     DeleteRegKey HKLM "${UninstallKey}"
     RMDir "$INSTDIR"

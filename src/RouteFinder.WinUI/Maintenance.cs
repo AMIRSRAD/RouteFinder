@@ -66,7 +66,7 @@ public sealed partial class MainWindow
             TextWrapping = TextWrapping.Wrap
         }, "Clear results");
         if (await dialog.ShowAsync() != ContentDialogResult.Primary) return;
-        ProfileStore.SaveMeasurements([]);
+        WriteStore("test results", () => ProfileStore.SaveMeasurements([]));
         measurements.Clear();
         AddActivity("Cleared saved route tests.");
         Refresh();

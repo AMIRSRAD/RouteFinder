@@ -1,4 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup><OutputType>Exe</OutputType><TargetFramework>net8.0-windows</TargetFramework><ImplicitUsings>enable</ImplicitUsings><Nullable>enable</Nullable></PropertyGroup>
   <ItemGroup><ProjectReference Include="../../src/RouteFinder.Service/RouteFinder.Service.csproj" /></ItemGroup>
+  <ItemGroup>
+    <Compile Include="../../src/RouteFinder.App/ConnectionSession.cs;../../src/RouteFinder.App/Diagnostics.cs;../../src/RouteFinder.App/PathMtuProbe.cs" Link="Shared/%(Filename)%(Extension)" />
+  </ItemGroup>
 </Project>
