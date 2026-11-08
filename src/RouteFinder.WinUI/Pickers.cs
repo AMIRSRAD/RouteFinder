@@ -20,7 +20,26 @@ public sealed partial class MainWindow
         DefaultButton = primary.Length == 0 ? ContentDialogButton.Close : ContentDialogButton.Primary
     };
 
-    public sealed record RoutePickerRow(string Key, string Title, string Detail, string AccessibleName, string Result, string TestAge);
+    public sealed record RoutePickerRow(string Key, string Title, string Detail, string AccessibleName, string Result, string TestAge,
+        string Badge = "", int Tone = 0);
+
+    // Two-letter region code, or initials for imported configurations.
+    static string RouteBadge(RouteChoice choice)
+    {
+        if (choice.Service?.RegionCode is { Length: > 0 } code) return code.Length > 2 ? code[..2].ToUpperInvariant() : code.ToUpperInvariant();
+        var words = choice.Title.Split([' ', '·', '-', '_'], StringSplitOptions.RemoveEmptyEntries);
+        return string.Concat(words.Take(2).Select(word => char.ToUpperInvariant(word[0])));
+    }
+
+    // 0 untested, 1 good, 2 fair, 3 poor, 4 failed. Drives the color of the result pill.
+    static int RouteTone(RouteTestResult? result) => result switch
+    {
+        null => 0,
+        { Succeeded: false } => 4,
+        { Latency: > 150 } or { Loss: > 5 } => 3,
+        { Latency: > 80 } or { Loss: > 1 } => 2,
+        _ => 1
+    };
 
     bool updatingRouteBrowser;
 
@@ -114,7 +133,7 @@ public sealed partial class MainWindow
                     return new RoutePickerRow(item.Key, IsFavorite(item) ? $"★ {item.Title}" : item.Title,
                         $"{item.Source} · {item.Detail}", $"{item.Title}, {item.Source}",
                         result is null ? "Untested" : FormatTest(result),
-                        result?.TestedAt?.ToLocalTime().ToString("MMM d · HH:mm") ?? "");
+                        result?.TestedAt?.ToLocalTime().ToString("MMM d · HH:mm") ?? "", RouteBadge(item), RouteTone(result));
                 }).ToArray();
             if (RouteList.ItemsSource is RoutePickerRow[] previousRows && previousRows.SequenceEqual(rows))
                 rows = previousRows;

@@ -131,10 +131,15 @@ public sealed class WireSockTunnel : IDisposable
         if (apps.Length > 0 && allApplications)
             throw new ArgumentException("All-applications routing cannot use a selected-app list.", nameof(applications));
         if (apps.Length > 0 && profile.GetInterface("DisallowedApps").Length > 0) throw new FormatException("This profile uses DisallowedApps. Remove that option to use selected-application routing.");
-        bool forceComma = Environment.GetCommandLineArgs().Contains("--wiresock-comma-app-list");
-        string allowedApps = FormatAppList(apps, sdkFileVersion, forceComma);
+        var arguments = Environment.GetCommandLineArgs();
+        bool forceComma = arguments.Contains("--wiresock-comma-app-list");
+        bool forcePipe = arguments.Contains("--wiresock-pipe-app-list");
+        if (forceComma && forcePipe) throw new ArgumentException("Choose only one WireSock app-list separator override.");
+        string? sdkSeparatorNote = forceComma || forcePipe ? null : UnverifiedSeparatorNote(sdkFileVersion);
+        if (sdkSeparatorNote is not null && apps.Length > 1) Log?.Invoke(sdkSeparatorNote);
+        string allowedApps = FormatAppList(apps, sdkFileVersion, forceComma, forcePipe);
         string disallowedApps = FormatAppList(profile.GetInterface("DisallowedApps")
-            .Split('|', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries), sdkFileVersion, forceComma);
+            .Split('|', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries), sdkFileVersion, forceComma, forcePipe);
         if (uplinkAdapterId is not null && profile.GetInterface("Socks5Proxy").Length > 0)
             throw new InvalidOperationException("Choose Automatic internet adapter for a route that uses a SOCKS5 proxy.");
         lock (gate)
@@ -308,10 +313,22 @@ public sealed class WireSockTunnel : IDisposable
 
     private T Bind<T>(string name) where T : Delegate => Marshal.GetDelegateForFunctionPointer<T>(NativeLibrary.GetExport(library, name));
 
-    private static string FormatAppList(string[] apps, string? fileVersion, bool forceComma)
+    private const string VerifiedCommaSdk = "3.4.8.1";
+
+    private static bool UsesCommaSeparator(string? fileVersion) =>
+        Version.TryParse(fileVersion, out var version) && Version.TryParse(VerifiedCommaSdk, out var verified) && version >= verified;
+
+    private static string? UnverifiedSeparatorNote(string? fileVersion) =>
+        UsesCommaSeparator(fileVersion) && fileVersion != VerifiedCommaSdk
+            ? $"WireSock SDK {fileVersion} is newer than the verified {VerifiedCommaSdk}; using its comma-separated app list. " +
+              "If selected apps do not route, restart with --wiresock-pipe-app-list and check Activity > Diagnostics."
+            : null;
+
+    private static string FormatAppList(string[] apps, string? fileVersion, bool forceComma, bool forcePipe)
     {
-        // Both create_tunnel_ex exports in 3.4.8.1 split the list on commas despite the SDK guide.
-        bool commaSeparated = fileVersion == "3.4.8.1" || forceComma;
+        // Both create_tunnel_ex exports in 3.4.8.1 split the list on commas despite the SDK guide, and later
+        // releases are assumed to keep that parser. Older or unreadable versions follow the documented pipe format.
+        bool commaSeparated = forcePipe ? false : forceComma || UsesCommaSeparator(fileVersion);
         if (commaSeparated && apps.Any(path => path.Contains(',')))
             throw new ArgumentException("This WireSock app list cannot represent executable paths containing commas.", nameof(apps));
         return string.Join(commaSeparated ? ',' : '|', apps);

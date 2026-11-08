@@ -1,6 +1,7 @@
 using System.Net;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using RouteFinder.App;
 
 namespace RouteFinder.WinUI;
 
@@ -11,7 +12,7 @@ public sealed partial class MainWindow
         bool open = VerificationScroller.Visibility != Visibility.Visible;
         if (open && VerificationScroller.Content is null) VerificationScroller.Content = CreateVerificationPanel();
         VerificationScroller.Visibility = open ? Visibility.Visible : Visibility.Collapsed;
-        VerifyRoutingButton.Content = open ? "Show apps" : "Verify routing";
+        VerifyRoutingButton.Content = UiLanguage.Text(open ? "Hide" : "Verify routing");
         Refresh();
     }
 

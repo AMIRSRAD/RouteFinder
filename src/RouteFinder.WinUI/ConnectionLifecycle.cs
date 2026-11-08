@@ -116,12 +116,8 @@ public sealed partial class MainWindow
         trayReconnect!.Enabled = !busy && session.HasTunnel;
     }
 
-    void OpenConnectionOptions(object sender, RoutedEventArgs args)
-    {
-        InlineConnectionActions.Visibility = InlineConnectionActions.Visibility == Visibility.Visible
-            ? Visibility.Collapsed : Visibility.Visible;
-        RefreshConnectionActions();
-    }
+    // The actions live in the button's flyout; refresh them each time it opens.
+    void OpenConnectionOptions(object sender, RoutedEventArgs args) => RefreshConnectionActions();
 
     void RefreshConnectionActions()
     {
@@ -268,16 +264,16 @@ public sealed partial class MainWindow
     {
         if (armed is not null) { CancelWatch(); Refresh(); return; }
         if (busy || Connected || session.NeedsCleanup || preview) return;
-        if (route is null || Scope.SelectedIndex == 1 || checkedApps.Count == 0)
+        if (route is null || Scope.SelectedIndex == 1 || !VpnApps().Any())
         {
             Report("Choose a route and check at least one executable in Selected apps mode.");
             return;
         }
         if (!EnsureAdministrator()) return;
-        armed = new AppWatch(route.Key, new HashSet<string>(checkedApps, StringComparer.OrdinalIgnoreCase));
+        armed = new AppWatch(route.Key, new HashSet<string>(VpnApps(), StringComparer.OrdinalIgnoreCase));
         lastProcessCheck = null;
         recoveryAttempted = false;
-        AddActivity($"Watching {checkedApps.Count} apps for {route.Title}.");
+        AddActivity($"Watching {VpnApps().Count()} apps for {route.Title}.");
         Refresh();
     }
 

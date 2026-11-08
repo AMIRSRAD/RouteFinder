@@ -96,8 +96,9 @@ Check("marshal app lists using the installed SDK version's separator", () =>
 {
     using var tunnel = new WireSockTunnel();
     var wide = typeof(WireSockTunnel).GetMethod("Wide", BindingFlags.Instance | BindingFlags.NonPublic)!;
-    var format = typeof(WireSockTunnel).GetMethod("FormatAppList", BindingFlags.Static | BindingFlags.NonPublic)!
-        .CreateDelegate<Func<string[], string?, bool, string>>();
+    var method = typeof(WireSockTunnel).GetMethod("FormatAppList", BindingFlags.Static | BindingFlags.NonPublic)!;
+    var native = method.CreateDelegate<Func<string[], string?, bool, bool, string>>();
+    string format(string[] apps, string? sdk, bool comma) => native(apps, sdk, comma, false);
     string[] paths = [@"C:\Telegram Desktop\Telegram.exe", @"C:\Apps\Discord.exe"];
     const string version = "3.4.8.1";
     nint allowed = (nint)wide.Invoke(tunnel, [format(paths, version, false)])!;
@@ -106,6 +107,9 @@ Check("marshal app lists using the installed SDK version's separator", () =>
     Require(format([@"C:\", @"D:\"], version, false) == @"C:\,D:\", "Console exclusions must use the same separator.");
     Require(format(paths, null, false) == string.Join('|', paths), "Unverified SDKs use the documented separator.");
     Require(format(paths, null, true) == string.Join(',', paths), "The diagnostic switch must force the comma separator.");
+    Require(format(paths, "3.4.8.2", false) == string.Join(',', paths), "Releases after the verified SDK keep the comma separator.");
+    Require(format(paths, "3.4.7.0", false) == string.Join('|', paths), "Releases before the verified SDK use the documented separator.");
+    Require(native(paths, version, false, true) == string.Join('|', paths), "The pipe override must win over the version default.");
     Require(format([paths[0]], version, false) == paths[0], "A single path needs no delimiter.");
     Require((nint)wide.Invoke(tunnel, [format([], version, false)])! == 0 &&
         (nint)wide.Invoke(tunnel, [""])! == 0, "Unused allow and deny lists must marshal as null.");
