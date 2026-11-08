@@ -182,15 +182,30 @@ public sealed partial class MainWindow
 
     async void PickBackgroundApp(object sender, RoutedEventArgs args) => await PickRunningApps(background: true);
 
-    async Task PickRunningApps(string[]? expected = null, bool background = false)
+    async Task PickRunningApps(string[]? expected = null, bool background = false, string? groupName = null)
     {
         if (busy || Connected || session.NeedsCleanup) return;
         var existing = apps.ToHashSet(StringComparer.OrdinalIgnoreCase);
         string[]? paths = null;
-        await Run("Finding running apps…", async () =>
-            paths = await Task.Run(() => FindRunningApps(existing, expected, background)));
+        await Run(expected is null ? "Finding running apps…" : "Finding the game's files…", async () =>
+            paths = await Task.Run(() =>
+            {
+                var running = FindRunningApps(existing, expected, background);
+                if (expected is null) return running;
+                var installed = FindInstalledApps(expected.Where(name => !running.Any(path => ExecutableMatches(path, name))),
+                    running.Concat(existing.Where(path => expected.Any(name => ExecutableMatches(path, name)))), groupName);
+                return running.Concat(installed).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+            }));
         if (exitRequested || closing || paths is null) return;
         var list = CreateRunningAppList(paths, preselect: expected is not null);
+        if (paths.Length == 0 && groupName is not null && expected is not null)
+        {
+            // Nothing is installed or running yet: still add the game, with every executable waiting for its file.
+            AddCatalogGroup(groupName, [], expected);
+            Report($"Added {groupName} with {expected.Length} executables not found yet. They join when the app runs or you add their files.",
+                InfoBarSeverity.Success);
+            return;
+        }
         if (paths.Length == 0)
         {
             Report(expected is null ? "No new running apps were found. You can browse for an executable instead."
@@ -206,7 +221,9 @@ public sealed partial class MainWindow
             if (missing.Length > 0)
                 panel.Children.Add(new TextBlock
                 {
-                    Text = $"Could not find {string.Join(", ", missing)}. Start those apps or browse for their files.",
+                    Text = groupName is null
+                        ? $"Could not find {string.Join(", ", missing)}. Start those apps or browse for their files."
+                        : $"Not found yet: {string.Join(", ", missing)}. They are still added to the group and start using the route once the app runs or you add their files.",
                     TextWrapping = TextWrapping.Wrap, MaxWidth = 390
                 });
             content = panel;
@@ -216,7 +233,9 @@ public sealed partial class MainWindow
         dialog.IsPrimaryButtonEnabled = list.SelectedItems.Count > 0;
         list.SelectionChanged += (_, _) => dialog.IsPrimaryButtonEnabled = list.SelectedItems.Count > 0;
         if (await dialog.ShowAsync() != ContentDialogResult.Primary) return;
-        AddApplications(list.SelectedItems.OfType<ListViewItem>().Select(item => (string)item.Tag));
+        var chosen = list.SelectedItems.OfType<ListViewItem>().Select(item => (string)item.Tag).ToArray();
+        if (groupName is not null && expected is not null) AddCatalogGroup(groupName, chosen, expected);
+        else AddApplications(chosen);
     }
 
     static ListView CreateRunningAppList(IEnumerable<string> paths, bool preselect)
@@ -245,7 +264,7 @@ public sealed partial class MainWindow
                 {
                     if (names is null ? (process.MainWindowHandle == IntPtr.Zero) != background : !names.Contains(process.ProcessName))
                         continue;
-                    if (process.MainModule?.FileName is { } path && path.EndsWith(".exe", StringComparison.OrdinalIgnoreCase) &&
+                    if ((ProcessImagePath(process.Id) ?? process.MainModule?.FileName) is { } path && path.EndsWith(".exe", StringComparison.OrdinalIgnoreCase) &&
                         (names is null ? !existing.Contains(path) : names.Contains(ExecutableStem(path))))
                         paths.Add(path);
                 }
@@ -265,7 +284,10 @@ public sealed partial class MainWindow
             if (!preview) WriteStore("applications", () => ProfileStore.SaveApplications(updated));
             apps.Clear();
             apps.AddRange(updated);
-            checkedApps.UnionWith(chosen);
+            // Files a catalog group was waiting for join that group; the rest are new standalone apps.
+            var joined = AttachToGroups(chosen);
+            checkedApps.UnionWith(chosen.Where(path => !joined.Contains(path)));
+            if (joined.Count > 0) StoreRouteChoices();
             SaveAppSelection();
             RenderApps();
             Refresh();

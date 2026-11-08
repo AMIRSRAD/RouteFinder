@@ -46,6 +46,7 @@ public sealed partial class MainWindow : Window
     public MainWindow(bool preview, bool verifyStartup = false)
     {
         this.preview = preview;
+        verifying = verifyStartup;
         if (!preview) UiLanguage.Load();
         InitializeComponent();
         ApplyLanguage();
@@ -112,6 +113,7 @@ public sealed partial class MainWindow : Window
         catch (Exception error) { Report(error.Message); }
         InitializeRouteBrowser();
         BuildSettingsPage();
+        LoadGroups();
         InitializeAdapterRules();
         ReloadPresetPicker();
         ready = true;
@@ -173,7 +175,9 @@ public sealed partial class MainWindow : Window
     void RenderApps()
     {
         AppRows.Children.Clear();
-        foreach (string path in apps)
+        foreach (var group in groups) AppRows.Children.Add(BuildGroupRow(group));
+        var grouped = GroupedPaths();
+        foreach (string path in apps.Where(path => !grouped.Contains(path)))
         {
             string name = Path.GetFileNameWithoutExtension(path);
             // Tick box: switches the app on or off without removing it from the list.
@@ -294,7 +298,7 @@ public sealed partial class MainWindow : Window
         }
     }
 
-    void RemoveApplication(string path)
+    void RemoveApplication(string path, bool rebuild = true)
     {
         var updated = apps.ToList();
         updated.Remove(path);
@@ -309,7 +313,9 @@ public sealed partial class MainWindow : Window
             appVpnDraft.Remove(path);
             suggestedWindowsApps.Remove(path);
             seenCheckedWindowsApps.Remove(path);
+            foreach (var group in groups) group.Members.Remove(path);
             SaveAppSelection();
+            if (!rebuild) return;
             RenderApps();
             Refresh();
         }
@@ -338,14 +344,17 @@ public sealed partial class MainWindow : Window
         bool vpnEditable = editable && directRouting is null;
         SyncWindowsAppSuggestions();
         UpdateWindowsRoutingActions();
+        QueueAdapterSync();
         bool entirePc = Scope.SelectedIndex == 1;
         if (armed is { } watch && (entirePc || watch.RouteKey != route?.Key || !watch.Paths.SetEquals(VpnApps())))
             CancelWatch();
         Scope.IsEnabled = editable;
+        RenderAppsIfRouteChanged();
         bool rulesEditable = editable && !AppRouterActive;
         foreach (var row in AppRows.Children.OfType<Grid>())
             foreach (var control in row.Children.OfType<Control>()) control.IsEnabled = rulesEditable && !preview;
-        int listed = apps.Count;
+        SetGroupRowsEnabled(rulesEditable && !preview);
+        int listed = apps.Count + groups.Sum(group => group.Pending.Count);
         AppScroller.Visibility = listed > 0 ? Visibility.Visible : Visibility.Collapsed;
         EmptyApps.Visibility = listed == 0 ? Visibility.Visible : Visibility.Collapsed;
         UpdatePresetSection();
@@ -359,7 +368,7 @@ public sealed partial class MainWindow : Window
         SaveReportButton.IsEnabled = !preview;
         ConnectionActionsButton.IsEnabled = !busy;
         int onCount = apps.Count(checkedApps.Contains);
-        int vpnCount = VpnApps().Count();
+        int vpnCount = VpnTargets().Length;
         AppSummary.Text = UiLanguage.Text(entirePc ? "Entire PC mode is on, so every app uses the VPN route. Direct choices still apply."
             : listed == 0 ? "" : $"{onCount} of {listed} apps on · {vpnCount} through VPN · {onCount - vpnCount} direct");
         if (!entirePc && selectedGame is { } game) AppSummary.Text += $" · Catalog: {game.Name}";
@@ -369,12 +378,6 @@ public sealed partial class MainWindow : Window
             : string.Join(", ", apps.Where(checkedApps.Contains).Take(3).Select(Path.GetFileNameWithoutExtension)) +
               (onCount > 3 ? $" +{onCount - 3}" : "");
         HomeRouteTitle.Text = route?.Title ?? UiLanguage.Text("No route selected");
-        ScopeHint.Text = UiLanguage.Text(Scope.SelectedIndex switch
-        {
-            1 => "Every app on this PC uses the route.",
-            2 => "Only selected apps get network access while connected. Other apps are blocked.",
-            _ => "Only selected apps use the route. Other apps keep their normal connection."
-        });
         if (refreshRouteBrowser) RefreshRouteBrowser();
         InternetAdapterRow.Visibility = route is null ? Visibility.Collapsed : Visibility.Visible;
         InternetAdapterButton.IsEnabled = editable && route is not null && !preview;
@@ -394,9 +397,10 @@ public sealed partial class MainWindow : Window
             TestShortlistButton.IsEnabled || ClearTestsButton.IsEnabled;
         SetActionLabel(ConnectButton, Connected ? "Disconnect" : session.NeedsCleanup ? "Retry cleanup" : "Connect",
             Connected ? "\uE71A" : session.NeedsCleanup ? "\uE72C" : "\uE7E8");
-        ConnectButton.IsEnabled = !busy && !AppRouterActive &&
+        ConnectButton.IsEnabled = !busy &&
             (Connected || session.NeedsCleanup || route is not null && (entirePc || vpnCount > 0));
         RefreshProviders();
+        RefreshVpnBar();
         UpdateDnsButtons();
         if (WindowCanRenderTelemetry) UpdateStatus();
         UpdatePolling();
@@ -429,9 +433,9 @@ public sealed partial class MainWindow : Window
             previousTraffic = null;
             trafficRate = null;
             ConnectionTitle.Text = UiLanguage.Text(session.NeedsCleanup ? "Cleanup needed" : "Disconnected");
-            ConnectionDetail.Text = session.NeedsCleanup ? "Retry cleanup to release the allocated session."
+            ConnectionDetail.Text = session.NeedsCleanup ? "Retry cleanup."
                 : route is null ? UiLanguage.Text("Add a route to get started.")
-                : Scope.SelectedIndex != 1 && !VpnApps().Any() ? "Switch on at least one app that goes through the VPN."
+                : Scope.SelectedIndex != 1 && VpnTargets().Length == 0 ? "No app set to Through VPN."
                 : armed is { } watch ? $"Watching {watch.Paths.Count} app(s) for launch."
                 : UiLanguage.Text("Ready to connect.");
             return;
@@ -476,7 +480,7 @@ public sealed partial class MainWindow : Window
                     handshake && metrics.RxBytes > 0 && float.IsFinite(metrics.EstimatedLoss) && metrics.EstimatedLoss is >= 0 and <= 100
                         ? metrics.EstimatedLoss : null, metrics.RxBytes, metrics.TxBytes, trafficRate,
                     handshake && !connectedForConsole && Scope.SelectedIndex != 1 && metrics.RxBytes == 0
-                        ? "Peer reachable · Waiting for tunnel traffic. If an app is already open, reopen it."
+                        ? "Waiting for traffic · reopen running apps"
                         : handshake ? $"Uptime {DateTimeOffset.UtcNow - connectedAt:hh\\:mm\\:ss} · {connectedEndpoint}" : "Waiting for handshake");
             else RenderTelemetry(null, null, 0, 0, null, "Tunnel statistics unavailable");
             ConnectionDetail.Text = stats is { } sample
@@ -507,11 +511,6 @@ public sealed partial class MainWindow : Window
     async Task ChangeConnection(bool automatic = false, bool console = false)
     {
         if (busy || exitRequested || closing) return;
-        if (AppRouterActive)
-        {
-            if (!automatic) Report("Stop Windows routing before starting a VPN tunnel.", InfoBarSeverity.Informational);
-            return;
-        }
         if (!automatic) CancelWatch();
         if (preview)
         {
@@ -532,8 +531,9 @@ public sealed partial class MainWindow : Window
         }
         if (route is not { } selected) return;
         if (!EnsureAdministrator()) return;
+        await ResolvePendingApps();
         bool entirePc = console || Scope.SelectedIndex == 1;
-        string[] paths = entirePc ? [] : VpnApps().ToArray();
+        string[] paths = entirePc ? [] : VpnTargets();
         if (!entirePc && paths.Length == 0)
         {
             Report("Select at least one app before connecting.");
@@ -545,7 +545,8 @@ public sealed partial class MainWindow : Window
             Report($"{selectedGame?.Name} is incompatible with these selected apps: {string.Join(", ", conflicts)}.");
             return;
         }
-        var missing = paths.Where(path => !File.Exists(path)).ToArray();
+        // Bare names are matched by WireSock at run time; only real paths must exist.
+        var missing = paths.Where(path => !RouteFinder.Core.WireSockTunnel.IsExecutableName(path) && !File.Exists(path)).ToArray();
         if (missing.Length > 0)
         {
             Report($"Could not find {string.Join(", ", missing.Select(Path.GetFileName))}. Uncheck the missing entries and add the current executables.");
@@ -553,6 +554,8 @@ public sealed partial class MainWindow : Window
         }
         await Run("Starting tunnel…", async () =>
         {
+            // Make sure the tunnel and the VPN apps are pinned above any default adapter before the tunnel starts.
+            await SyncAdapterRules();
             var local = selected.Profile is { } profile ? TunnelProfile.Parse(profile.Configuration, profile.Name) : null;
             var bypass = preferences.BypassDestinations.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
             var domains = bypass.Where(value => Uri.CheckHostName(value) == UriHostNameType.Dns).ToArray();
@@ -563,7 +566,7 @@ public sealed partial class MainWindow : Window
                 bypassLan: preferences.BypassLan,
                 keepaliveSeconds: preferences.KeepaliveSeconds, excludedApplications: preferences.ExcludedApplications,
                 tunnelMtu: preferences.TunnelMtu, socksProxyOverride: ConfiguredProxy, blockOtherApps: !console && BlocksOtherApps,
-                uplinkAdapterId: UplinkFor(selected));
+                uplinkAdapterId: activeFallback is not null && !console ? PinnedTunnelAdapter(activeFallback) : UplinkFor(selected));
             connectedAt = DateTimeOffset.UtcNow;
             reconnectFailed = false;
             ResetTrafficHealth();

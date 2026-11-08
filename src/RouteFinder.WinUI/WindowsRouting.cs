@@ -12,6 +12,35 @@ public sealed partial class MainWindow
     DirectAppRouting? directRouting;
     bool appRouterVpn;
     bool AppRouterActive => directRouting is not null || appRouterVpn;
+
+    // The default adapter is a catch-all Windows rule with no app filter. It applies to every connection this user
+    // makes, including RouteFinder's own tunnel traffic and the apps sent through the VPN, so the two cannot run together.
+    string? activeFallback;
+    DirectAppRouting.Rule[] activeAssignments = [];
+    DirectAppRouting.Rule[] activePins = [];
+
+    // In the default transparent mode RouteFinder pins its own tunnel traffic and the Through VPN apps to the
+    // tunnel's adapter with app rules, which outrank the catch-all. The virtual adapter mode cannot be pinned that way.
+
+    /// <summary>The adapter the tunnel leaves on while a default adapter is set: the route's choice, else the default adapter.</summary>
+    string? PinnedTunnelAdapter(string? fallback) => route is { } current && UplinkFor(current) is { } chosen ? chosen : fallback;
+
+    // App rules that keep RouteFinder (which sends the encrypted tunnel traffic) and the Through VPN apps on the
+    // tunnel's adapter, so the catch-all default adapter cannot pull them away.
+    DirectAppRouting.Rule[] VpnPins(string? fallback, IEnumerable<string>? vpnPaths = null)
+    {
+        if (fallback is null || preferences.PortableEngine || PinnedTunnelAdapter(fallback) is not { } adapter) return [];
+        var paths = new List<string>();
+        if (Environment.ProcessPath is { } self) paths.Add(self);
+        paths.AddRange((vpnPaths ?? VpnApps()).Where(File.Exists));
+        return paths.Distinct(StringComparer.OrdinalIgnoreCase).Select(path => new DirectAppRouting.Rule(path, adapter)).ToArray();
+    }
+
+    static bool SameRules(DirectAppRouting.Rule[] left, DirectAppRouting.Rule[] right) =>
+        left.Length == right.Length && left.All(rule => right.Any(other =>
+            other.Executable.Equals(rule.Executable, StringComparison.OrdinalIgnoreCase) &&
+            other.AdapterId.Equals(rule.AdapterId, StringComparison.OrdinalIgnoreCase)));
+
     Dictionary<string, string> appVpnDraft = new(StringComparer.OrdinalIgnoreCase);
     bool windowsRoutingSupported;
     Dictionary<string, string>? windowsAppDraft;
@@ -58,21 +87,39 @@ public sealed partial class MainWindow
     /// <summary>Apps that are switched on and go through the VPN route.</summary>
     IEnumerable<string> VpnApps() => apps.Where(path => checkedApps.Contains(path) && !IsAdapterApp(path));
 
+    /// <summary>
+    /// What the tunnel is given: the VPN apps' paths plus, for groups set to Through VPN, the executables whose file
+    /// was not found, by name. WireSock matches those by process name, the same way EZConnect routes catalog games.
+    /// </summary>
+    string[] VpnTargets() => VpnApps().Concat(groups.Where(group => group.Enabled && !group.Direct)
+            .SelectMany(group => group.Pending).Where(RouteFinder.Core.WireSockTunnel.IsExecutableName))
+        .Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+
     AppRouteMode CurrentMode(string path, IReadOnlyList<AppRouteMode> modes)
     {
         string adapterId = windowsAppDraft?.GetValueOrDefault(path) ?? "";
         if (adapterId.Length > 0 && !appVpnDraft.ContainsKey(path))
             return modes.FirstOrDefault(mode => mode.Kind == AppRouteKind.Adapter &&
                 mode.AdapterId.Equals(adapterId, StringComparison.OrdinalIgnoreCase)) ?? modes[^1];
-        return modes[0];
+        string uplink = route is { } current ? UplinkFor(current) ?? "" : "";
+        return modes.FirstOrDefault(mode => mode.Kind == AppRouteKind.Vpn &&
+            mode.AdapterId.Equals(uplink, StringComparison.OrdinalIgnoreCase)) ?? modes[0];
     }
 
-    List<AppRouteMode> RouteModes(string path)
+    List<AppRouteMode> RouteModes(string path, string? savedAdapter = null)
     {
-        var modes = new List<AppRouteMode> { new(AppRouteKind.Vpn, "", "Through VPN") };
+        // VPN choices: the tunnel's adapter is shared by every Through VPN app, because one tunnel runs at a time.
+        var modes = new List<AppRouteMode> { new(AppRouteKind.Vpn, "", "Through VPN (automatic)") };
+        if (route is { } current && !RouteNeedsAutomaticUplink(current))
+        {
+            modes.AddRange(windowsAdapters.Where(adapter => adapter.HasGateway)
+                .Select(adapter => new AppRouteMode(AppRouteKind.Vpn, adapter.Id, $"Through VPN via {adapter.Label}")));
+            if (UplinkFor(current) is { } uplink && !modes.Any(mode => mode.AdapterId.Equals(uplink, StringComparison.OrdinalIgnoreCase)))
+                modes.Add(new(AppRouteKind.Vpn, uplink, "Through VPN via saved adapter (unavailable)", false));
+        }
         modes.AddRange(windowsAdapters.Select(adapter => new AppRouteMode(AppRouteKind.Adapter, adapter.Id,
             "Direct · " + adapter.Label, adapter.Available)));
-        string saved = windowsAppDraft?.GetValueOrDefault(path) ?? "";
+        string saved = savedAdapter ?? windowsAppDraft?.GetValueOrDefault(path) ?? "";
         if (saved.Length > 0 && !modes.Any(mode => mode.AdapterId.Equals(saved, StringComparison.OrdinalIgnoreCase)))
             modes.Add(new(AppRouteKind.Adapter, saved, "Saved adapter unavailable", false));
         return modes;
@@ -83,14 +130,26 @@ public sealed partial class MainWindow
         if (windowsAppDraft is not { } draft || busy || AppRouterActive) return;
         // The menu only decides how the app connects. Whether it is used at all is the tick box beside it.
         suggestedWindowsApps.Remove(path);
-        if (mode.Kind == AppRouteKind.Vpn) draft[path] = "";
+        bool uplinkChanged = false;
+        if (mode.Kind == AppRouteKind.Vpn)
+        {
+            draft[path] = "";
+            string? wanted = mode.AdapterId.Length == 0 ? null : mode.AdapterId;
+            if (route is { } current && UplinkFor(current) != wanted)
+            {
+                SetRouteUplink(current, wanted);
+                uplinkChanged = true;
+            }
+        }
         else
         {
             appVpnDraft.Remove(path);
             draft[path] = mode.AdapterId;
         }
         StoreRouteChoices();
-        Refresh(refreshRouteBrowser: false);
+        // A new tunnel adapter applies to every Through VPN app, so their menus are redrawn to match.
+        if (uplinkChanged) DispatcherQueue.TryEnqueue(() => { RenderApps(); Refresh(refreshRouteBrowser: false); });
+        else Refresh(refreshRouteBrowser: false);
     }
 
     // Remembers how every listed app connects, so nothing has to be set up again next time.
@@ -184,39 +243,6 @@ public sealed partial class MainWindow
         UpdateWindowsRoutingActions();
     }
 
-    void UpdateWindowsRoutingActions()
-    {
-        if (windowsAppDraft is not { } draft) return;
-        bool active = AppRouterActive;
-        bool editable = !active && !busy && !Connected && !session.NeedsCleanup;
-        // Only apps that are switched on take part.
-        var assigned = draft.Where(rule => checkedApps.Contains(rule.Key) && (rule.Value.Length > 0 || appVpnDraft.ContainsKey(rule.Key))).ToArray();
-        bool fallbackReady = windowsFallbackDraft is null || windowsAdapters.Any(adapter =>
-            adapter.HasGateway && adapter.Id.Equals(windowsFallbackDraft, StringComparison.OrdinalIgnoreCase));
-        bool readyToStart = (assigned.Length > 0 || windowsFallbackDraft is not null) && fallbackReady && assigned.All(rule =>
-            File.Exists(rule.Key) && (rule.Value.Length == 0 || windowsAdapters.Any(adapter => adapter.Available &&
-                adapter.Id.Equals(rule.Value, StringComparison.OrdinalIgnoreCase))));
-        bool clearing = assigned.Length == 0 && windowsFallbackDraft is null &&
-            (preferences.DirectAppAdapters is { Count: > 0 } || preferences.DirectFallbackAdapter is not null ||
-                preferences.AppVpnRoutes is { Count: > 0 });
-        int pinned = assigned.Count(rule => rule.Value.Length > 0);
-        WindowsRoutingStatus.Text = UiLanguage.Text(active
-            ? $"Adapter routing is on · {pinned} app{(pinned == 1 ? "" : "s")}" + (windowsFallbackDraft is null ? "" : " · default adapter on")
-            : pinned > 0 ? $"{pinned} app{(pinned == 1 ? "" : "s")} pinned to an adapter"
-            : windowsFallbackDraft is not null ? "Default adapter set for other apps" : "Saved adapter rules");
-        StartWindowsRoutingButton.Content = UiLanguage.Text(active ? "Stop routing" : clearing ? "Clear saved rules" : "Save & apply");
-        StartWindowsRoutingButton.IsEnabled = !busy && (active || editable && (clearing || readyToStart && windowsRoutingSupported));
-        AdapterRulesBar.Visibility = active || pinned > 0 || windowsFallbackDraft is not null || clearing
-            ? Visibility.Visible : Visibility.Collapsed;
-        WindowsFallbackAdapter.IsEnabled = editable;
-        RefreshWindowsAdaptersButton.IsEnabled = !busy;
-        WindowsRoutingHint.Text = UiLanguage.Text(active ? "Fully quit and reopen pinned apps to replace their existing connections. Stop routing before editing rules or starting a VPN."
-            : !windowsRoutingSupported ? "This Windows build does not expose per-app connection policies."
-            : !fallbackReady ? "Reconnect the saved default adapter or choose a connected adapter with a gateway."
-            : assigned.Length > 0 && !readyToStart ? "Each pinned app needs an existing executable and a connected adapter."
-            : "Pinned apps use their adapter directly. Apply this, then reopen the apps.");
-    }
-
     bool StoreWindowsAppRules()
     {
         if (windowsAppDraft is not { } draft) return false;
@@ -235,90 +261,15 @@ public sealed partial class MainWindow
         catch (Exception error) { Report(error.Message); return false; }
     }
 
-    async void ToggleWindowsRouting(object sender, RoutedEventArgs args)
-    {
-        if (busy || Connected && !appRouterVpn || closing) return;
-        if (AppRouterActive)
-        {
-            await Run("Stopping Windows routing…", async () =>
-            {
-                await StopAppRouter();
-                Report("Windows app routing stopped. Reopen apps to use the Windows default.", InfoBarSeverity.Success);
-            });
-            return;
-        }
-        if (session.NeedsCleanup) return;
-        if (windowsAppDraft is not { } draft) return;
-        var assignments = draft.Where(rule => checkedApps.Contains(rule.Key) && rule.Value.Length > 0 && !appVpnDraft.ContainsKey(rule.Key))
-            .Select(rule => new DirectAppRouting.Rule(rule.Key, rule.Value)).ToArray();
-        string? fallback = windowsFallbackDraft;
-        var vpnRules = draft.Where(rule => checkedApps.Contains(rule.Key) && appVpnDraft.ContainsKey(rule.Key)).ToArray();
-        RouteChoice? vpnRoute = null;
-        string? uplink = null;
-        if (vpnRules.Length > 0)
-        {
-            if (fallback is not null)
-            {
-                Report("Choose Follow Windows for unassigned apps when using VPN rules in the App Router.");
-                return;
-            }
-            var keys = vpnRules.Select(rule => appVpnDraft[rule.Key]).Distinct().ToArray();
-            var adapters = vpnRules.Select(rule => rule.Value).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
-            if (keys.Length != 1 || adapters.Length != 1)
-            {
-                Report("VPN apps in this profile must share one VPN route and one uplink adapter.");
-                return;
-            }
-            vpnRoute = Routes().FirstOrDefault(choice => choice.Key == keys[0]);
-            if (vpnRoute is null)
-            {
-                Report("A saved VPN route is unavailable. Select an available route.");
-                return;
-            }
-            uplink = adapters[0].Length == 0 ? null : adapters[0];
-        }
-        if (!StoreWindowsAppRules()) return;
-        if (assignments.Length == 0 && fallback is null && vpnRules.Length == 0)
-        {
-            Refresh();
-            Report("Saved Windows app rules cleared.", InfoBarSeverity.Success);
-            return;
-        }
-        if (!EnsureAdministrator()) return;
-        CancelWatch();
-        await Run("Starting Windows routing…", async () =>
-        {
-            if (vpnRoute is not null)
-            {
-                var local = vpnRoute.Profile is { } profile ? TunnelProfile.Parse(profile.Configuration, profile.Name) : null;
-                connectedEndpoint = await session.ConnectAsync(vpnRoute.Service, local, vpnRules.Select(rule => rule.Key).ToArray(),
-                    portable: preferences.PortableEngine, dnsOverride: preferences.DnsOverride, autoMtu: preferences.AutoMtu,
-                    bypassLan: preferences.BypassLan, keepaliveSeconds: preferences.KeepaliveSeconds,
-                    tunnelMtu: preferences.TunnelMtu, socksProxyOverride: ConfiguredProxy, uplinkAdapterId: uplink);
-                connectedAt = DateTimeOffset.UtcNow;
-                appRouterVpn = true;
-            }
-            try
-            {
-                if (assignments.Length > 0 || fallback is not null)
-                    directRouting = await Task.Run(() => DirectAppRouting.Start(assignments, fallback));
-            }
-            catch
-            {
-                if (appRouterVpn) await StopAppRouter();
-                throw;
-            }
-            Report("Windows routing is active. Fully quit and reopen affected apps to replace existing connections.", InfoBarSeverity.Success);
-        });
-    }
-
-
     async Task StopAppRouter()
     {
         if (directRouting is { } routing)
         {
             await Task.Run(routing.Dispose);
             directRouting = null;
+            activeFallback = null;
+            activeAssignments = [];
+            activePins = [];
         }
         if (appRouterVpn)
         {

@@ -16,7 +16,8 @@ public sealed partial class MainWindow
         public required InfoBar Error;
         public required ComboBox Language, WindowSize;
         public required ToggleSwitch Tray, Tips, Recover, KillSwitch, BypassLan, Portable, AutoMtu, ProxyAllTraffic;
-        public required TextBox Idle, PeerTimeout, TestTimeout, Mtu, Keepalive, Bypass, Excluded, ProxyEndpoint, ProxyUser;
+        public required NumberBox Idle, PeerTimeout, TestTimeout, Mtu, Keepalive;
+        public required TextBox Bypass, Excluded, ProxyEndpoint, ProxyUser;
         public required PasswordBox ProxyPassword;
         public required DnsEditor Dns;
     }
@@ -45,19 +46,19 @@ public sealed partial class MainWindow
         var killSwitch = Toggle("\uE72E", "Kill switch",
             "Block traffic outside the tunnel. With Selected apps, other apps lose network access until you disconnect.");
         var bypassLan = Toggle("\uE968", "Allow local network", "Keep printers, NAS, and other local IPv4 devices outside the tunnel.");
-        var idle = Number("\uE916", "Auto-disconnect delay", "Seconds to wait after watched apps close (Watch apps).");
+        var idle = Number("\uE916", "Auto-disconnect delay (s)", "Seconds to wait after watched apps close", 5, 3600);
 
         Section("Advanced network");
         var portable = Toggle("\uE839", "Virtual adapter mode", "Use a WireSock virtual adapter instead of transparent per-app mode.");
         var autoMtu = Toggle("\uE9D9", "Auto MTU", "Probe the path and pick the largest working packet size.");
-        var mtu = Number("\uE9D9", "Manual MTU", "Leave blank to use the route's value.");
-        var keepalive = Number("\uE916", "Keepalive", "Seconds between keepalive packets. Leave blank to use the route's value.");
+        var mtu = Number("\uE9D9", "MTU", "Empty uses the route's value", 576, 65535, optional: true);
+        var keepalive = Number("\uE916", "Keepalive (s)", "Empty uses the route's value", 0, 65535, optional: true);
         var dns = new DnsEditor();
         Row("", "DNS override", "Pick a provider or enter addresses. Automatic uses the route's own DNS.", dns, stacked: true);
         var bypass = Text("\uE7BA", "Bypass list", "IP addresses, CIDR ranges, or hostnames that skip the tunnel.");
         var excluded = Text("\uE71D", "Entire PC exclusions", "Executable paths that skip the tunnel in Entire PC mode, one per line.", multiline: true);
-        var peerTimeout = Number("\uE916", "Peer response timeout", "Seconds to wait for the server to answer.");
-        var testTimeout = Number("\uE916", "Route test timeout", "Seconds each route test may take.");
+        var peerTimeout = Number("\uE916", "Peer response timeout (s)", "How long to wait for the server to answer", 5, 180);
+        var testTimeout = Number("\uE916", "Route test timeout (s)", "How long each route test may take", 5, 180);
 
         Section("SOCKS5 proxy");
         var proxyEndpoint = Text("\uE968", "Proxy address", "host:port. Leave blank to connect directly.");
@@ -121,9 +122,14 @@ public sealed partial class MainWindow
             return control;
         }
 
-        TextBox Number(string glyph, string title, string? description)
+        NumberBox Number(string glyph, string title, string? description, double minimum, double maximum, bool optional = false)
         {
-            var control = new TextBox { Width = 120, InputScope = new InputScope { Names = { new InputScopeName(InputScopeNameValue.Number) } } };
+            var control = new NumberBox
+            {
+                Width = 150, Minimum = minimum, Maximum = maximum, SmallChange = 1, LargeChange = 10, AcceptsExpression = false,
+                SpinButtonPlacementMode = NumberBoxSpinButtonPlacementMode.Compact, ValidationMode = NumberBoxValidationMode.InvalidInputOverwritten,
+                PlaceholderText = optional ? UiLanguage.Text("Automatic") : ""
+            };
             Row(glyph, title, description, control);
             return control;
         }
@@ -141,11 +147,8 @@ public sealed partial class MainWindow
         icon.Child = new FontIcon { Glyph = glyph, Style = (Style)Root.Resources["TileGlyph"] };
         var text = new StackPanel { VerticalAlignment = VerticalAlignment.Center, Spacing = 2 };
         text.Children.Add(new TextBlock { Text = UiLanguage.Text(title), TextWrapping = TextWrapping.Wrap });
-        if (description is not null)
-            text.Children.Add(new TextBlock
-            {
-                Text = UiLanguage.Text(description), TextWrapping = TextWrapping.Wrap, Style = (Style)Root.Resources["Caption"]
-            });
+        // The explanation is a hover tip, so the page shows labels and controls only.
+        if (description is not null) ToolTipService.SetToolTip(grid, UiLanguage.Text(description));
         Grid.SetColumn(text, 1);
         control.VerticalAlignment = VerticalAlignment.Center;
         if (stacked)
@@ -176,16 +179,16 @@ public sealed partial class MainWindow
         f.Recover.IsOn = preferences.RecoverStoppedTunnel;
         f.KillSwitch.IsOn = preferences.KillSwitch;
         f.BypassLan.IsOn = preferences.BypassLan;
-        f.Idle.Text = preferences.OnDemandIdleSeconds.ToString();
+        f.Idle.Value = preferences.OnDemandIdleSeconds;
         f.Portable.IsOn = preferences.PortableEngine;
         f.AutoMtu.IsOn = preferences.AutoMtu;
-        f.Mtu.Text = preferences.TunnelMtu?.ToString() ?? "";
-        f.Keepalive.Text = preferences.KeepaliveSeconds?.ToString() ?? "";
+        f.Mtu.Value = preferences.TunnelMtu ?? double.NaN;
+        f.Keepalive.Value = preferences.KeepaliveSeconds ?? double.NaN;
         f.Dns.Load(SplitValues(preferences.DnsOverride));
         f.Bypass.Text = preferences.BypassDestinations;
         f.Excluded.Text = string.Join(Environment.NewLine, preferences.ExcludedApplications ?? []);
-        f.PeerTimeout.Text = preferences.PeerResponseSeconds.ToString();
-        f.TestTimeout.Text = preferences.RouteTestSeconds.ToString();
+        f.PeerTimeout.Value = preferences.PeerResponseSeconds;
+        f.TestTimeout.Value = preferences.RouteTestSeconds;
         var proxy = ConfiguredProxy;
         f.ProxyEndpoint.Text = proxy?.Endpoint ?? "";
         f.ProxyUser.Text = proxy?.Username ?? "";
@@ -260,11 +263,22 @@ public sealed partial class MainWindow
     static string[] SplitValues(string text) =>
         text.Split([',', '\r', '\n'], StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
 
+    // Text boxes in dialogs (route test options) still use typed numbers.
     static int? Number(TextBox field, string label, int minimum, int maximum, bool optional = false)
     {
         string value = field.Text.Trim();
         if (optional && value.Length == 0) return null;
         if (!int.TryParse(value, out int number) || number < minimum || number > maximum)
+            throw new FormatException($"{label} must be between {minimum} and {maximum}.");
+        return number;
+    }
+
+    static int? Number(NumberBox field, string label, int minimum, int maximum, bool optional = false)
+    {
+        if (double.IsNaN(field.Value))
+            return optional ? null : throw new FormatException($"{label} needs a number.");
+        int number = (int)Math.Round(field.Value);
+        if (number < minimum || number > maximum)
             throw new FormatException($"{label} must be between {minimum} and {maximum}.");
         return number;
     }

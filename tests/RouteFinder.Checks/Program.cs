@@ -88,9 +88,18 @@ Check("Windows connection policy structs match the x64 SDK layout", () =>
 Check("reject relative app paths before native handle creation", () =>
 {
     using var tunnel = new WireSockTunnel();
-    try { tunnel.Connect(TunnelProfile.Parse(valid), new[] { "relative.exe" }); }
+    try { tunnel.Connect(TunnelProfile.Parse(valid), new[] { @"folder\relative.exe" }); }
     catch (ArgumentException) { Require(!tunnel.IsActive, "Native handle should not be active."); return; }
     throw new Exception("Relative application path accepted.");
+});
+Check("accept bare executable names and reject paths or separators in them", () =>
+{
+    Require(WireSockTunnel.IsExecutableName("Discord.exe") && WireSockTunnel.IsExecutableName("VALORANT-Win64-Shipping.exe") &&
+        WireSockTunnel.IsExecutableName("Riot Client.exe"), "Catalog executable names must be accepted.");
+    Require(!WireSockTunnel.IsExecutableName(@"C:\Games\Game.exe") && !WireSockTunnel.IsExecutableName(@"folder\Game.exe") &&
+        !WireSockTunnel.IsExecutableName("a,b.exe") && !WireSockTunnel.IsExecutableName("a|b.exe") &&
+        !WireSockTunnel.IsExecutableName("Game") && !WireSockTunnel.IsExecutableName(" Game.exe"),
+        "Paths, separators, and names without .exe must not be treated as bare names.");
 });
 Check("marshal app lists using the installed SDK version's separator", () =>
 {

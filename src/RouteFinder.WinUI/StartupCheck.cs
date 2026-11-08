@@ -54,7 +54,7 @@ public sealed partial class MainWindow
             if (window.AppRows.Children.Count != 3 ||
                 window.AdapterRulesBar.Visibility != Microsoft.UI.Xaml.Visibility.Visible ||
                 window.windowsAppDraft?.GetValueOrDefault(selected) != "fixture-direct-adapter" ||
-                window.windowsAppDraft?.ContainsKey(olderApp) != false || window.StartWindowsRoutingButton.IsEnabled)
+                window.windowsAppDraft?.ContainsKey(olderApp) != false)
                 throw new InvalidOperationException("The Apps list must show saved adapter rules and reject missing adapters.");
             if (((Grid)window.AppRows.Children[0]).Children.OfType<ComboBox>().Single().SelectedItem is not
                 AppRouteMode { Kind: AppRouteKind.Adapter, Available: false })
@@ -110,6 +110,15 @@ public sealed partial class MainWindow
                 .Single(item => item.Key == "local:Preferred route");
             if (!window.checkedApps.SetEquals([selected]))
                 throw new InvalidOperationException("Switching imported routes reused the previous route's apps.");
+            var inspection = await window.ReadAppRoutingReport();
+            if (!inspection.Contains("fixture.exe · Through VPN · Preferred route") || inspection.Contains("fixture.exe · Direct"))
+                throw new InvalidOperationException("The routing inspector must report a Through VPN app as using the VPN route.");
+            if (!window.VpnBarTitle.Text.StartsWith("1 app will go through Preferred route"))
+                throw new InvalidOperationException($"The Apps page must say where Through VPN apps go (got \"{window.VpnBarTitle.Text}\").");
+            var vpnMenu = ((Grid)window.AppRows.Children[0]).Children.OfType<ComboBox>().Single();
+            if (vpnMenu.SelectedItem is not AppRouteMode { Kind: AppRouteKind.Vpn, AdapterId: "fixture-uplink", Available: false } ||
+                ((IEnumerable<AppRouteMode>)vpnMenu.ItemsSource).First() is not { Kind: AppRouteKind.Vpn, AdapterId: "" })
+                throw new InvalidOperationException("A Through VPN app must show the route's tunnel adapter and offer Automatic.");
             window.ApplyPreset(window.presets.Single());
             if (window.route?.Key != "local:Existing profile" || !window.checkedApps.SetEquals([olderApp]) || window.Connected)
                 throw new InvalidOperationException("Applying the saved preset did not restore its route and app scope without connecting.");
@@ -159,6 +168,51 @@ public sealed partial class MainWindow
                 savedProfile?.Adapters.GetValueOrDefault(selected) != "fixture-uplink" ||
                 savedProfile?.DefaultAdapter != "fixture-fallback")
                 throw new InvalidOperationException("The routing profile lost its VPN route, uplink, or default adapter.");
+            // Beside a default adapter, RouteFinder and the VPN apps are pinned to the tunnel's adapter with app rules.
+            string realApp = Path.Combine(Environment.SystemDirectory, "notepad.exe");
+            var pins = window.VpnPins("fixture-fallback", [selected, realApp]);
+            string? tunnelAdapter = window.PinnedTunnelAdapter("fixture-fallback");
+            if (tunnelAdapter is null || pins.Length != 2 || pins.Any(pin => pin.AdapterId != tunnelAdapter) ||
+                !pins.Any(pin => pin.Executable.Equals(realApp, StringComparison.OrdinalIgnoreCase)) ||
+                !pins.Any(pin => pin.Executable.Equals(Environment.ProcessPath, StringComparison.OrdinalIgnoreCase)))
+                throw new InvalidOperationException("The tunnel and VPN apps must be pinned to the route's adapter above the default adapter.");
+            // A default adapter cannot be pinned around in virtual adapter mode, so it stays off there.
+            window.windowsFallbackDraft = "fixture-fallback";
+            window.preferences = window.preferences with { PortableEngine = true };
+            if (window.DesiredFallback() is not null || window.VpnPins("fixture-fallback", [selected]).Length != 0)
+                throw new InvalidOperationException("Virtual adapter mode must not apply a default adapter.");
+            window.preferences = window.preferences with { PortableEngine = false };
+            window.windowsFallbackDraft = null;
+            // Entire PC and Selected apps only take over every app, so adapter rules pause themselves.
+            int scopeBefore = window.Scope.SelectedIndex;
+            window.Scope.SelectedIndex = 1;
+            if (!window.AdapterRulesPaused || window.AdapterSignature() != "paused")
+                throw new InvalidOperationException("Adapter rules must pause while Entire PC is on.");
+            window.Scope.SelectedIndex = scopeBefore;
+            window.Refresh();
+            // A catalog game becomes one group, even when none of its executables exist yet.
+            int standalone = window.AppRows.Children.Count;
+            window.AddCatalogGroup("Example game", [], ["Game.exe", "Launcher.exe", "Helper.exe"]);
+            var gameGroup = window.groups.SingleOrDefault();
+            if (gameGroup is null || gameGroup.Pending.Count != 3 || gameGroup.Members.Count != 0 ||
+                window.AppRows.Children.Count != standalone + 1 || window.AppRows.Children[0] is not Expander)
+                throw new InvalidOperationException("A catalog game with no files found must be added as one group with its executables waiting.");
+            window.AddApplications([@"C:\Games\Game.exe", @"C:\Games\Helper.exe"]);
+            if (gameGroup.Members.Count != 2 || gameGroup.Pending.Count != 1 || gameGroup.Pending[0] != "Launcher.exe" ||
+                window.AppRows.Children.Count != standalone + 1 || !window.apps.Contains(@"C:\Games\Game.exe"))
+                throw new InvalidOperationException("Files added later must join the group that was waiting for them instead of becoming separate rows.");
+            window.ToggleGroup(gameGroup, false);
+            if (window.checkedApps.Contains(@"C:\Games\Game.exe") || window.VpnApps().Contains(@"C:\Games\Helper.exe"))
+                throw new InvalidOperationException("Switching a group off must switch off every member.");
+            window.ChooseGroupRoute(gameGroup, new AppRouteMode(AppRouteKind.Adapter, "fixture-direct-adapter", "Direct"));
+            if (window.windowsAppDraft!.GetValueOrDefault(@"C:\Games\Game.exe") != "fixture-direct-adapter" || !gameGroup.Direct)
+                throw new InvalidOperationException("A group's route choice must apply to every member.");
+            var saved = ProfileStore.LoadPreferences().AppGroups?.Single();
+            if (saved is null || saved.Members.Count != 2 || saved.Pending.Count != 1 || saved.Enabled || !saved.Direct)
+                throw new InvalidOperationException("App groups were not saved with their state.");
+            window.RemoveGroup(gameGroup);
+            if (window.groups.Count != 0 || window.apps.Contains(@"C:\Games\Game.exe") || window.AppRows.Children.Count != standalone)
+                throw new InvalidOperationException("Removing a group must remove its members too.");
             File.WriteAllText(Path.Combine(directory.FullName, "preferences.dat"), "unreadable fixture");
             var recovery = new MainWindow(preview: false, verifyStartup: true);
             try
