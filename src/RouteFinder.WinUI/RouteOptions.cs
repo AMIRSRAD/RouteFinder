@@ -94,18 +94,29 @@ public sealed partial class MainWindow
         var dialog = MakeDialog("Internet adapter", panel, "Save");
         if (await dialog.ShowAsync() != ContentDialogResult.Primary || picker.SelectedIndex < 0) return;
 
-        var updated = new Dictionary<string, string>(preferences.RouteUplinks ?? []);
         var option = options[picker.SelectedIndex];
-        if (option.Id is null) updated.Remove(choice.Key);
-        else updated[choice.Key] = option.Id;
-        var next = preferences with { RouteUplinks = updated };
-        WriteStore("preferences", () => ProfileStore.SavePreferences(next));
-        preferences = next;
-        appliedPresetUplink = null;
-        adapterNames.Clear();
+        SetRouteUplink(choice, option.Id);
+        RenderApps();
         Refresh();
         Report($"{choice.Title} · Internet adapter: {option.Label}", InfoBarSeverity.Success);
     }
+
+    /// <summary>Sets which adapter carries a route's VPN tunnel. Null means Windows chooses.</summary>
+    void SetRouteUplink(RouteChoice choice, string? adapterId)
+    {
+        var updated = new Dictionary<string, string>(preferences.RouteUplinks ?? []);
+        if (adapterId is null) updated.Remove(choice.Key);
+        else updated[choice.Key] = adapterId;
+        var next = preferences with { RouteUplinks = updated };
+        if (!preview) WriteStore("preferences", () => ProfileStore.SavePreferences(next));
+        preferences = next;
+        appliedPresetUplink = null;
+        adapterNames.Clear();
+    }
+
+    // A SOCKS5 route must let Windows pick the adapter.
+    bool RouteNeedsAutomaticUplink(RouteChoice choice) => ConfiguredProxy is not null ||
+        choice.Profile?.Configuration.Contains("Socks5Proxy", StringComparison.OrdinalIgnoreCase) == true;
 
     void ToggleFavorite(RouteChoice choice)
     {

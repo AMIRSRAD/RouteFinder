@@ -122,10 +122,15 @@ public sealed class WireSockTunnel : IDisposable
         profile.Validate();
         ArgumentNullException.ThrowIfNull(applications);
         var originalApps = applications.ToArray();
-        if (originalApps.Any(x => !Path.IsPathFullyQualified(x))) throw new ArgumentException("Selected application paths must be absolute.", nameof(applications));
-        var apps = originalApps.Select(Path.GetFullPath).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+        // Entries are either full paths to existing executables, or bare executable names such as "discord.exe",
+        // which WireSock matches by process name (the way EZConnect passes catalog games).
+        var names = originalApps.Where(IsExecutableName).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+        var fullPaths = originalApps.Where(app => !IsExecutableName(app)).ToArray();
+        if (fullPaths.Any(x => !Path.IsPathFullyQualified(x))) throw new ArgumentException("Selected application paths must be absolute.", nameof(applications));
+        var apps = fullPaths.Select(Path.GetFullPath).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
         foreach (string app in apps)
             if (!File.Exists(app) || !app.EndsWith(".exe", StringComparison.OrdinalIgnoreCase) || app.Contains('|')) throw new ArgumentException("Selected applications must be existing executable files with no pipe character in their paths.", nameof(applications));
+        apps = apps.Concat(names).ToArray();
         if (apps.Length == 0 && !allApplications)
             throw new ArgumentException("Select at least one application to route.", nameof(applications));
         if (apps.Length > 0 && allApplications)
@@ -310,6 +315,11 @@ public sealed class WireSockTunnel : IDisposable
                 throw new InvalidOperationException("WireSock could not reset the tunnel's TCP connections.");
         }
     }
+
+    /// <summary>A bare executable file name (no folder), usable as a WireSock app rule matched by process name.</summary>
+    public static bool IsExecutableName(string value) =>
+        value.Length is > 4 and < 260 && value.Trim() == value && value.EndsWith(".exe", StringComparison.OrdinalIgnoreCase) &&
+        value.IndexOfAny(Path.GetInvalidFileNameChars()) < 0 && value.IndexOfAny([',', '|']) < 0;
 
     private T Bind<T>(string name) where T : Delegate => Marshal.GetDelegateForFunctionPointer<T>(NativeLibrary.GetExport(library, name));
 

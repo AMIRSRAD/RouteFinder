@@ -338,8 +338,8 @@
 
                                 <StackPanel Grid.Row="2" Grid.ColumnSpan="2" Spacing="2" Margin="0,-8,0,0">
                                     <StackPanel Orientation="Horizontal" Spacing="8">
-                                        <FontIcon Glyph="&#xE8AB;" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-                                        <TextBlock x:Name="LiveUsage" Text="Connect to see tunnel traffic." Style="{StaticResource Secondary}"
+                                        <FontIcon x:Name="UsageIcon" Glyph="&#xE8AB;" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                        <TextBlock x:Name="LiveUsage" Text="" Style="{StaticResource Secondary}"
                                                    MaxLines="2" TextTrimming="CharacterEllipsis" />
                                     </StackPanel>
                                     <TextBlock x:Name="LivePeer" Style="{StaticResource Caption}" TextTrimming="CharacterEllipsis" Margin="20,0,0,0" />
@@ -393,7 +393,6 @@
                                             <x:String>Entire PC</x:String>
                                             <x:String>Selected apps only</x:String>
                                         </RadioButtons>
-                                        <TextBlock x:Name="ScopeHint" Style="{StaticResource Caption}" TextWrapping="Wrap" />
                                     </StackPanel>
                                 </Grid>
                             </StackPanel>
@@ -412,7 +411,6 @@
                             <Border Style="{StaticResource HeroTile}"><FontIcon Glyph="&#xE71D;" Style="{StaticResource HeroGlyph}" /></Border>
                             <StackPanel VerticalAlignment="Center">
                                 <TextBlock Text="Apps" Style="{StaticResource PageTitle}" />
-                                <TextBlock Text="Switch apps on or off, and choose how each one connects: through the VPN or straight through an adapter." Style="{StaticResource PageSubtitle}" />
                             </StackPanel>
                         </StackPanel>
                         <Button x:Name="AddAppsButton" Grid.Column="2" Content="Add app" Style="{StaticResource AccentButtonStyle}" VerticalAlignment="Center">
@@ -426,7 +424,23 @@
                             </Button.Flyout>
                         </Button>
                     </Grid>
-                    <TextBlock x:Name="AppSummary" Grid.Row="1" Style="{StaticResource Secondary}" MaxLines="2" TextTrimming="CharacterEllipsis"  />
+                    <StackPanel Grid.Row="1" Spacing="10">
+                        <!-- Where "Through VPN" apps go, and whether that is happening right now. -->
+                        <Border x:Name="VpnBar" Style="{StaticResource Card}" Padding="16,12">
+                            <Grid ColumnSpacing="14">
+                                <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                <Border Style="{StaticResource IconTile}">
+                                    <Ellipse x:Name="VpnBarDot" Width="10" Height="10" Fill="{ThemeResource ControlStrongFillColorDefaultBrush}" />
+                                </Border>
+                                <StackPanel Grid.Column="1" VerticalAlignment="Center" Spacing="1">
+                                    <TextBlock x:Name="VpnBarTitle" Style="{StaticResource BodyStrongTextBlockStyle}" TextTrimming="CharacterEllipsis" />
+                                    <TextBlock x:Name="VpnBarDetail" Style="{StaticResource Caption}" TextWrapping="Wrap" />
+                                </StackPanel>
+                                <Button x:Name="VpnBarButton" Grid.Column="2" VerticalAlignment="Center" Click="VpnBarClicked" />
+                            </Grid>
+                        </Border>
+                        <TextBlock x:Name="AppSummary" Style="{StaticResource Secondary}" MaxLines="2" TextTrimming="CharacterEllipsis" />
+                    </StackPanel>
 
                     <Grid Grid.Row="2" Margin="0,4,0,0">
                         <ScrollViewer x:Name="AppScroller" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
@@ -435,8 +449,6 @@
                         <StackPanel x:Name="EmptyApps" Spacing="8" Margin="0,40,0,0" HorizontalAlignment="Center" VerticalAlignment="Top" Visibility="Collapsed">
                             <FontIcon Glyph="&#xE71D;" FontSize="40" Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
                             <TextBlock Text="No apps yet" Style="{StaticResource SubtitleTextBlockStyle}" HorizontalAlignment="Center" />
-                            <TextBlock Text="Use Add app to pick a running app or browse for its executable." Style="{StaticResource Secondary}"
-                                       HorizontalAlignment="Center" TextAlignment="Center" MaxWidth="340" />
                         </StackPanel>
                     </Grid>
 
@@ -447,10 +459,7 @@
                             <Border Style="{StaticResource IconTile}"><FontIcon Glyph="&#xE968;" Style="{StaticResource TileGlyph}" /></Border>
                             <StackPanel Grid.Column="1" VerticalAlignment="Center" Spacing="1">
                                 <TextBlock x:Name="WindowsRoutingStatus" Style="{StaticResource BodyStrongTextBlockStyle}" AutomationProperties.LiveSetting="Polite" />
-                                <TextBlock x:Name="WindowsRoutingHint" Style="{StaticResource Caption}" TextWrapping="Wrap" />
                             </StackPanel>
-                            <Button x:Name="StartWindowsRoutingButton" Grid.Column="2" Content="Save &amp; apply" VerticalAlignment="Center"
-                                    Style="{StaticResource AccentButtonStyle}" Click="ToggleWindowsRouting" />
                         </Grid>
                     </Border>
                 </Grid>
@@ -462,7 +471,6 @@
                             <Border Style="{StaticResource HeroTile}"><FontIcon Glyph="&#xE968;" Style="{StaticResource HeroGlyph}" /></Border>
                             <StackPanel VerticalAlignment="Center">
                                 <TextBlock Text="Network" Style="{StaticResource PageTitle}" />
-                                <TextBlock Text="Your adapters, DNS, and how apps without a rule connect." Style="{StaticResource PageSubtitle}" />
                             </StackPanel>
                         </StackPanel></Border>
 
@@ -479,7 +487,6 @@
                                     </Button>
                                 </Grid>
                                 <TextBlock x:Name="WindowsDefaultAdapter" Style="{StaticResource Caption}" TextWrapping="Wrap" />
-                                <TextBlock Text="Choose Follow Windows to leave other apps alone. Apply this on the Apps page." Style="{StaticResource Caption}" TextWrapping="Wrap" />
                             </StackPanel>
                         </Border>
 
@@ -500,7 +507,6 @@
                                     <Button x:Name="ApplyDnsButton" Content="Apply DNS" Style="{StaticResource AccentButtonStyle}" Click="ApplyDnsClicked" />
                                     <Button x:Name="AutoDnsButton" Content="Use automatic DNS" Click="AutoDnsClicked" />
                                 </StackPanel>
-                                <TextBlock Text="DNS changes are saved by Windows for this interface and stay after RouteFinder closes." Style="{StaticResource Caption}" TextWrapping="Wrap" />
                             </StackPanel>
                         </Border>
 
@@ -511,7 +517,7 @@
                                     <Grid ColumnSpacing="16">
                                         <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
                                         <Border Style="{StaticResource IconTile}"><FontIcon Glyph="&#xE9D9;" Style="{StaticResource TileGlyph}" /></Border>
-                                        <StackPanel Grid.Column="1" VerticalAlignment="Center"><TextBlock Text="Live routing inspector" Style="{StaticResource BodyStrongTextBlockStyle}" /><TextBlock Text="See each app's established connections and the interface they use." Style="{StaticResource Caption}" /></StackPanel>
+                                        <TextBlock Grid.Column="1" Text="Live routing inspector" Style="{StaticResource BodyStrongTextBlockStyle}" VerticalAlignment="Center" ToolTipService.ToolTip="Each app's connections and the interface they use" />
                                         <FontIcon Grid.Column="2" Glyph="&#xE76C;" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
                                     </Grid>
                                 </Button>
@@ -520,7 +526,7 @@
                                     <Grid ColumnSpacing="16">
                                         <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
                                         <Border Style="{StaticResource IconTile}"><FontIcon Glyph="&#xE968;" Style="{StaticResource TileGlyph}" /></Border>
-                                        <StackPanel Grid.Column="1" VerticalAlignment="Center"><TextBlock Text="IPv6 adapter bindings" Style="{StaticResource BodyStrongTextBlockStyle}" /><TextBlock Text="Turn IPv6 on or off for active Windows adapters." Style="{StaticResource Caption}" /></StackPanel>
+                                        <TextBlock Grid.Column="1" Text="IPv6 adapter bindings" Style="{StaticResource BodyStrongTextBlockStyle}" VerticalAlignment="Center" ToolTipService.ToolTip="Turn IPv6 on or off for active adapters" />
                                         <FontIcon Grid.Column="2" Glyph="&#xE76C;" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
                                     </Grid>
                                 </Button>
@@ -536,7 +542,6 @@
                             <Border Style="{StaticResource HeroTile}"><FontIcon Glyph="&#xEA86;" Style="{StaticResource HeroGlyph}" /></Border>
                             <StackPanel VerticalAlignment="Center">
                                 <TextBlock Text="Providers" Style="{StaticResource PageTitle}" />
-                                <TextBlock Text="Providers add routes to RouteFinder. Their routes appear on the Routes page." Style="{StaticResource PageSubtitle}" />
                             </StackPanel>
                         </StackPanel></Border>
 
@@ -572,7 +577,7 @@
                                     <Border Style="{StaticResource HeroTile}"><FontIcon Glyph="&#xE8E5;" Style="{StaticResource HeroGlyph}" /></Border>
                                     <StackPanel Grid.Column="1" VerticalAlignment="Center" Spacing="2">
                                         <TextBlock Text="Imported configurations" Style="{StaticResource BodyStrongTextBlockStyle}" />
-                                        <TextBlock Text="WireGuard and Amnezia files you add yourself" Style="{StaticResource Caption}" />
+                                        
                                     </StackPanel>
                                     <Border Grid.Column="2" CornerRadius="10" Padding="10,3" VerticalAlignment="Center" Background="{ThemeResource SubtleFillColorSecondaryBrush}">
                                         <TextBlock x:Name="ImportedBadgeText" Text="0 routes" FontSize="12" FontWeight="SemiBold" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
@@ -583,17 +588,6 @@
                                     <Button Content="View routes" Click="GoToRoutes" />
                                 </StackPanel>
                             </StackPanel>
-                        </Border>
-
-                        <Border Style="{StaticResource Card}" BorderBrush="{ThemeResource ControlStrongStrokeColorDefaultBrush}" BorderThickness="1" Opacity="0.85">
-                            <Grid ColumnSpacing="14">
-                                <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
-                                <Border Style="{StaticResource IconTile}" Width="44" Height="44"><FontIcon Glyph="&#xE710;" Style="{StaticResource TileGlyph}" /></Border>
-                                <StackPanel Grid.Column="1" VerticalAlignment="Center" Spacing="2">
-                                    <TextBlock Text="More providers" Style="{StaticResource BodyStrongTextBlockStyle}" />
-                                    <TextBlock Text="Plugins for other route services will be added here." Style="{StaticResource Caption}" TextWrapping="Wrap" />
-                                </StackPanel>
-                            </Grid>
                         </Border>
                     </StackPanel>
                 </ScrollViewer>
@@ -610,7 +604,6 @@
                             <Border Style="{StaticResource HeroTile}"><FontIcon Glyph="&#xE909;" Style="{StaticResource HeroGlyph}" /></Border>
                             <StackPanel VerticalAlignment="Center">
                                 <TextBlock Text="Routes" Style="{StaticResource PageTitle}" />
-                                <TextBlock Text="Pick where your traffic exits. Test routes to compare latency." Style="{StaticResource PageSubtitle}" />
                             </StackPanel>
                         </StackPanel>
                         <Button x:Name="AddRouteButton" Grid.Column="1" Content="Add route" Style="{StaticResource AccentButtonStyle}" VerticalAlignment="Center">
@@ -640,8 +633,6 @@
                             <StackPanel x:Name="EmptyRouteLibrary" Spacing="8" Margin="24,48" HorizontalAlignment="Center" Visibility="Collapsed">
                                 <FontIcon Glyph="&#xE909;" FontSize="40" Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
                                 <TextBlock Text="No routes yet" Style="{StaticResource SubtitleTextBlockStyle}" HorizontalAlignment="Center" />
-                                <TextBlock Text="Use Add route to import a configuration or sign in to a route provider." Style="{StaticResource Secondary}"
-                                           HorizontalAlignment="Center" TextAlignment="Center" MaxWidth="340" />
                             </StackPanel>
                         </Grid>
                     </Border>
@@ -692,7 +683,6 @@
                             <Border Style="{StaticResource HeroTile}"><FontIcon Glyph="&#xE9D9;" Style="{StaticResource HeroGlyph}" /></Border>
                             <StackPanel VerticalAlignment="Center">
                                 <TextBlock Text="Activity" Style="{StaticResource PageTitle}" />
-                                <TextBlock Text="Connection events, diagnostics, and routing checks." Style="{StaticResource PageSubtitle}" />
                             </StackPanel>
                         </StackPanel>
                         <Button x:Name="CopyActivityButton" Grid.Column="1" Content="Copy" Click="CopyActivity"  VerticalAlignment="Center"/>
@@ -718,9 +708,8 @@
                                 <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
                                 <StackPanel>
                                     <TextBlock Text="Check per-app routing" Style="{StaticResource BodyStrongTextBlockStyle}" />
-                                    <TextBlock Text="Compare public IPs from two browsers to confirm only the selected app uses the route." Style="{StaticResource Caption}" TextWrapping="Wrap" />
                                 </StackPanel>
-                                <Button x:Name="VerifyRoutingButton" Grid.Column="1" Content="Verify routing" VerticalAlignment="Center" Click="ToggleRoutingVerification" />
+                                <Button x:Name="VerifyRoutingButton" Grid.Column="1" Content="Verify routing" ToolTipService.ToolTip="Compare public IPs from two browsers to confirm only the selected app uses the route" VerticalAlignment="Center" Click="ToggleRoutingVerification" />
                             </Grid>
                             <ScrollViewer x:Name="VerificationScroller" Visibility="Collapsed" MaxHeight="360"
                                           VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" />
@@ -737,7 +726,6 @@
                             <Border Style="{StaticResource HeroTile}"><FontIcon Glyph="&#xE713;" Style="{StaticResource HeroGlyph}" /></Border>
                             <StackPanel VerticalAlignment="Center">
                                 <TextBlock Text="Settings" Style="{StaticResource PageTitle}" />
-                                <TextBlock Text="Connection, network, and app preferences." Style="{StaticResource PageSubtitle}" />
                             </StackPanel>
                         </StackPanel>
                         <Button x:Name="SettingsResetButton" Grid.Column="1" Content="Discard changes" Click="DiscardSettings"  VerticalAlignment="Center"/>

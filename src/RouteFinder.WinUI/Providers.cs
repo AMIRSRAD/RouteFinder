@@ -17,8 +17,8 @@ public sealed partial class MainWindow
         EzBadgeText.Text = UiLanguage.Text(signedIn ? "Signed in" : preview ? "Preview" : "Not signed in");
         EzDetail.Text = UiLanguage.Text(signedIn
             ? $"{provided} routes · {accountCatalog?.Games.Count ?? 0} games and apps in the catalog"
-            : preview ? "This window uses sample routes."
-            : "Sign in to add EZConnect routes and the game catalog to your library.");
+            : preview ? "Sample routes"
+            : "Sign in to load your routes.");
         var neutral = (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["TextFillColorSecondaryBrush"];
         EzBadgeText.Foreground = signedIn ? (Microsoft.UI.Xaml.Media.Brush)Application.Current.Resources["SystemFillColorSuccessBrush"] : neutral;
 

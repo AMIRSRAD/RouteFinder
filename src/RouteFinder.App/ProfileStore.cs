@@ -38,7 +38,8 @@ internal static class ProfileStore
     internal sealed record RoutingPreset(string Name, string RouteKey, string RouteName, bool EntirePc, string[] Apps, string? CatalogGame,
         bool BlockOtherApps = false, string? AdapterId = null, bool HasAdapterChoice = false,
         string[]? EnabledApps = null, Dictionary<string, string>? AppAdapters = null, Dictionary<string, string>? AppVpnRoutes = null,
-        string? DefaultAdapter = null, bool HasDefaultAdapter = false, PresetSettings? Settings = null)
+        string? DefaultAdapter = null, bool HasDefaultAdapter = false, PresetSettings? Settings = null,
+        List<AppGroup>? AppGroups = null)
     {
         [System.Text.Json.Serialization.JsonIgnore]
         public bool IsFull => EnabledApps is not null;
@@ -54,7 +55,18 @@ internal static class ProfileStore
         bool RecoverStoppedTunnel = false, string[]? UncheckedApplications = null, bool BlockOtherApps = false,
         Dictionary<string, string>? RouteUplinks = null, Dictionary<string, string>? DirectAppAdapters = null,
         string? DirectFallbackAdapter = null, Dictionary<string, string>? AppVpnRoutes = null,
-        List<AppRoutingProfile>? AppRoutingProfiles = null);
+        List<AppRoutingProfile>? AppRoutingProfiles = null, List<AppGroup>? AppGroups = null);
+
+    /// <summary>
+    /// Several executables shown as one item, such as a game and its launcher. Members are paths in the app list.
+    /// Pending names are executables that were not found when the group was made; they join once found.
+    /// </summary>
+    internal sealed record AppGroup(string Name, List<string> Members, List<string> Pending)
+    {
+        public bool Enabled { get; set; } = true;
+        public bool Direct { get; set; }
+        public string AdapterId { get; set; } = "";
+    }
 
     public static Preferences LoadPreferences() => File.Exists(PreferencesPath)
         ? JsonSerializer.Deserialize<Preferences>(Protect(File.ReadAllBytes(PreferencesPath), false)) ?? new(false, []) : new(false, []);

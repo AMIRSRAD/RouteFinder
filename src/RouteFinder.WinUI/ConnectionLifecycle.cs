@@ -141,7 +141,8 @@ public sealed partial class MainWindow
         RecordRtt(rtt, Stopwatch.GetTimestamp());
         LiveLoss.Text = loss is float percent ? $"{percent:0.#}%" : "—";
         LiveUsage.Text = Connected ? $"↓ {FormatBytes(received)}  ↑ {FormatBytes(sent)}" +
-            (rate is null ? "" : $" · {rate}") : "Connect to see tunnel traffic.";
+            (rate is null ? "" : $" · {rate}") : "";
+        UsageIcon.Visibility = LiveUsage.Text.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
         LivePeer.Text = peer;
         LivePeer.Visibility = peer.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
         ToolTipService.SetToolTip(LivePeer, peer);

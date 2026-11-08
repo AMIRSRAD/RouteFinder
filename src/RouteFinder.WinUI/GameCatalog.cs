@@ -85,7 +85,7 @@ public sealed partial class MainWindow
         {
             preferences = preferences with { AutoAddLinkedApps = includeLinked.IsChecked == true };
             SavePreferences();
-            await PickRunningApps(preferences.AutoAddLinkedApps ? CatalogExecutables(game) : game.ExecutableNames);
+            await PickRunningApps(preferences.AutoAddLinkedApps ? CatalogExecutables(game) : game.ExecutableNames, groupName: game.Name);
         }));
         var recommended = Routes().Where(choice => choice.Service is { IsDownload: false } service &&
             service.RegionCode.Equals(game.RecommendedRegion, StringComparison.OrdinalIgnoreCase)).ToArray();

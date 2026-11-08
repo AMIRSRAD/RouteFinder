@@ -90,12 +90,18 @@ public sealed partial class MainWindow
             if (card.Left < 0 || card.Right > Root.ActualWidth + 1)
                 throw new InvalidOperationException("The Home status card extended outside the window.");
             // Extra screenshots of each page for design review, next to the main capture.
+            // Show a catalog game as one group (two files found, two still waiting) for the Apps screenshot.
+            groups.Add(new("VALORANT", [@"C:\Riot Games\Riot Client\RiotClientServices.exe", @"C:\Riot Games\VALORANT\vgtray.exe"],
+                ["VALORANT-Win64-Shipping.exe", "vgc.exe"]));
+            RenderApps();
             foreach (string page in new[] { "apps", "routes", "providers", "network", "activity", "settings" })
             {
                 ShowPage(page);
                 await Task.Delay(300);
                 await CaptureRoot(Path.ChangeExtension(path, null) + "-" + page + ".png");
             }
+            groups.Clear();
+            RenderApps();
             // Light theme, for design review. The window backdrop is not captured, so stand in for light Mica.
             Root.RequestedTheme = ElementTheme.Light;
             Root.Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(Windows.UI.Color.FromArgb(255, 243, 243, 243));

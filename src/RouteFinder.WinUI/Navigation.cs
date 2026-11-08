@@ -22,6 +22,7 @@ public sealed partial class MainWindow
         if (page == "settings" && currentPage != "settings") LoadSettingsFields();
         if (page == "network" && currentPage != "network") LoadInterfaces();
         if (page == "providers") RefreshProviders();
+        if (page == "apps") _ = ResolvePendingApps();
         currentPage = page;
         HomePage.Visibility = page == "home" ? Visibility.Visible : Visibility.Collapsed;
         AppsPage.Visibility = page == "apps" ? Visibility.Visible : Visibility.Collapsed;

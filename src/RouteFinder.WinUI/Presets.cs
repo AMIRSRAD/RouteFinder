@@ -40,11 +40,6 @@ public sealed partial class MainWindow
         buttons.Children.Add(PresetSaveButton);
         buttons.Children.Add(PresetDeleteButton);
         var body = new StackPanel { Spacing = 12 };
-        body.Children.Add(new TextBlock
-        {
-            Text = UiLanguage.Text("A preset saves everything in one go: route, internet adapter, your apps and how each connects, traffic scope, default adapter, and the connection settings below."),
-            Style = (Style)Root.Resources["Secondary"]
-        });
         body.Children.Add(PresetPicker);
         body.Children.Add(PresetDetails);
         body.Children.Add(buttons);
@@ -84,7 +79,7 @@ public sealed partial class MainWindow
         PresetPicker.IsEnabled = !busy;
         if (selected is null)
         {
-            PresetDetails.Text = UiLanguage.Text("Nothing saved yet. Set things up, then choose Save current setup.");
+            PresetDetails.Text = "";
             return;
         }
         var lines = new List<string>
@@ -147,7 +142,8 @@ public sealed partial class MainWindow
             EnabledApps: apps.Where(checkedApps.Contains).ToArray(),
             AppAdapters: apps.Where(draft.ContainsKey).ToDictionary(path => path, path => draft[path], StringComparer.OrdinalIgnoreCase),
             AppVpnRoutes: new(appVpnDraft, StringComparer.OrdinalIgnoreCase),
-            DefaultAdapter: windowsFallbackDraft, HasDefaultAdapter: true, Settings: settings);
+            DefaultAdapter: windowsFallbackDraft, HasDefaultAdapter: true, Settings: settings,
+            AppGroups: groups.Select(group => group with { Members = group.Members.ToList(), Pending = group.Pending.ToList() }).ToList());
     }
 
     async Task DeleteSelectedPreset()
@@ -224,6 +220,14 @@ public sealed partial class MainWindow
             seenCheckedWindowsApps.Clear();
             if (preset.HasDefaultAdapter) windowsFallbackDraft = preset.DefaultAdapter;
             if (preset.Settings is { } snapshot) ApplyPresetSettings(snapshot);
+            groups.Clear();
+            foreach (var saved in preset.AppGroups ?? [])
+                groups.Add(saved with
+                {
+                    Members = saved.Members.Where(path => apps.Contains(path, StringComparer.OrdinalIgnoreCase)).ToList(),
+                    Pending = saved.Pending.ToList()
+                });
+            SaveGroups();
         }
         else
         {

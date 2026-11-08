@@ -21,6 +21,16 @@ public sealed partial class App : Application
             await MainWindow.VerifyStartup(report);
             return;
         }
+        // Read-only: --detect-apps <report> <title> <name,name> [related path;path]
+        int detectArgument = Array.IndexOf(arguments, "--detect-apps");
+        if (detectArgument >= 0 && arguments.Length > detectArgument + 3)
+        {
+            string[] related = arguments.ElementAtOrDefault(detectArgument + 4)?.Split(';', StringSplitOptions.RemoveEmptyEntries) ?? [];
+            File.WriteAllText(arguments[detectArgument + 1], MainWindow.DiagnoseDetection(arguments[detectArgument + 2],
+                arguments[detectArgument + 3].Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries), related));
+            Exit();
+            return;
+        }
         int captureArgument = Array.IndexOf(arguments, "--capture-preview");
         string? capture = captureArgument >= 0 ? arguments.ElementAtOrDefault(captureArgument + 1) : null;
         bool preview = capture is not null || arguments.Contains("--preview");
