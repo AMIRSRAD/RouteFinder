@@ -34,7 +34,7 @@ public sealed partial class MainWindow
     void UpdatePolling()
     {
         bool visibleTelemetry = !closing && session.HasTunnel && WindowCanRenderTelemetry;
-        bool backgroundWork = armed is not null ||
+        bool backgroundWork = armed is not null || session.HasSelectedUplink ||
             preferences.RecoverStoppedTunnel && session.HasTunnel && !recoveryAttempted;
         if (preview || busy || closing || exitRequested || !visibleTelemetry && !backgroundWork)
         {
@@ -315,7 +315,19 @@ public sealed partial class MainWindow
         checkingProcesses = true;
         try
         {
-            if (preferences.RecoverStoppedTunnel && !recoveryAttempted && session.HasTunnel && !session.TunnelIsActive)
+            if (!session.UplinkIsCurrent)
+            {
+                CancelWatch();
+                await Run("Disconnecting…", async () =>
+                {
+                    if (appRouterVpn) await StopAppRouter();
+                    else await session.DisconnectAsync();
+                    Report("Disconnected because Windows stopped routing the VPN endpoint through the selected internet adapter.",
+                        InfoBarSeverity.Warning);
+                });
+                return;
+            }
+            if (!appRouterVpn && preferences.RecoverStoppedTunnel && !recoveryAttempted && session.HasTunnel && !session.TunnelIsActive)
             {
                 recoveryAttempted = true;
                 await Reconnect(automatic: true);

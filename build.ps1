@@ -114,6 +114,9 @@ try {
             product = 'RouteFinder'
             version = $ReleaseVersion.ToString()
             download_url = [uri]::new($ReleaseBaseUrl, (Split-Path -Leaf $package)).AbsoluteUri
+            release_page = if ($ReleaseBaseUrl.Host -eq 'github.com' -and $ReleaseBaseUrl.AbsolutePath -match '^/(.+)/releases/download/([^/]+)/$') {
+                "https://github.com/$($Matches[1])/releases/tag/$($Matches[2])"
+            }
             sha256 = (Get-FileHash -LiteralPath $package -Algorithm SHA256).Hash.ToLowerInvariant()
         } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $outputPath 'manifest.json') -Encoding utf8
     }

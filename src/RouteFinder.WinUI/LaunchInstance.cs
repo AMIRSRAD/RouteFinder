@@ -2,6 +2,15 @@ namespace RouteFinder.WinUI;
 
 internal sealed class LaunchInstance : IDisposable
 {
+    public static string SharedName
+    {
+        get
+        {
+            using var identity = System.Security.Principal.WindowsIdentity.GetCurrent();
+            return $@"Global\RouteFinder.{identity.User?.Value ?? throw new InvalidOperationException("Windows user identity is unavailable.")}";
+        }
+    }
+
     readonly Mutex lifetime;
     readonly EventWaitHandle activate;
     readonly RegisteredWaitHandle registration;

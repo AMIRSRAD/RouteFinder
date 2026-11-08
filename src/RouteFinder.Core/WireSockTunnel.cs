@@ -29,8 +29,12 @@ public sealed class WireSockTunnel : IDisposable
     private readonly string? sdkFileVersion;
     private readonly List<(nint Pointer, int Bytes)> allocatedStrings = [];
     private bool created;
+    private bool ownsNetworkLock;
+    private TunnelUplink? uplink;
 
     public string SdkPath { get; }
+    public string? UplinkName => uplink?.AdapterName;
+    public bool UplinkIsCurrent { get { lock (gate) return uplink?.IsCurrent ?? true; } }
     public event Action<string>? Log;
     public event Action<uint, uint>? TunnelEvent;
     private int proxyEvent;
@@ -111,7 +115,8 @@ public sealed class WireSockTunnel : IDisposable
         catch { NativeLibrary.Free(library); throw; }
     }
 
-    public void Connect(TunnelProfile profile, IEnumerable<string> applications, bool networkLock = false, bool allApplications = false)
+    public void Connect(TunnelProfile profile, IEnumerable<string> applications, bool networkLock = false,
+        bool allApplications = false, string? uplinkAdapterId = null)
     {
         ArgumentNullException.ThrowIfNull(profile);
         profile.Validate();
@@ -126,8 +131,12 @@ public sealed class WireSockTunnel : IDisposable
         if (apps.Length > 0 && allApplications)
             throw new ArgumentException("All-applications routing cannot use a selected-app list.", nameof(applications));
         if (apps.Length > 0 && profile.GetInterface("DisallowedApps").Length > 0) throw new FormatException("This profile uses DisallowedApps. Remove that option to use selected-application routing.");
-        string allowedApps = FormatAllowedApps(apps, sdkFileVersion,
-            Environment.GetCommandLineArgs().Contains("--wiresock-comma-app-list"));
+        bool forceComma = Environment.GetCommandLineArgs().Contains("--wiresock-comma-app-list");
+        string allowedApps = FormatAppList(apps, sdkFileVersion, forceComma);
+        string disallowedApps = FormatAppList(profile.GetInterface("DisallowedApps")
+            .Split('|', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries), sdkFileVersion, forceComma);
+        if (uplinkAdapterId is not null && profile.GetInterface("Socks5Proxy").Length > 0)
+            throw new InvalidOperationException("Choose Automatic internet adapter for a route that uses a SOCKS5 proxy.");
         lock (gate)
         {
             CheckDisposed();
@@ -138,6 +147,7 @@ public sealed class WireSockTunnel : IDisposable
             Interlocked.Exchange(ref lastTunnelError, -1);
             try
             {
+                if (uplinkAdapterId is not null) uplink = TunnelUplink.Open(uplinkAdapterId, profile.Endpoint);
                 if (profile.GetPeer("AllowedIPs").Split(',').Any(value => value.Trim() == "::/0") &&
                     setGlobalOption("EnableIPv6", "1") == 0)
                     Log?.Invoke("WireSock declined its optional IPv6 global setting; continuing with the profile's advertised routes.");
@@ -159,23 +169,34 @@ public sealed class WireSockTunnel : IDisposable
                     Jc = I("Jc"), Jmin = I("Jmin"), Jmax = I("Jmax"), Jd = I("Jd"), Id = I("Id"), Ip = I("Ip"), Ib = I("Ib"),
                     S1 = I("S1"), S2 = I("S2"), S3 = I("S3"), S4 = I("S4"), H1 = I("H1"), H2 = I("H2"), H3 = I("H3"), H4 = I("H4")
                 };
-                var peer = new NativePeer { PublicKey = P("PublicKey"), PresharedKey = P("PresharedKey"), AllowedIps = P("AllowedIPs"), Endpoint = P("Endpoint"), KeepAlive = uint.TryParse(profile.GetPeer("PersistentKeepalive"), out var keepAlive) ? keepAlive : 0 };
+                var peer = new NativePeer { PublicKey = P("PublicKey"), PresharedKey = P("PresharedKey"), AllowedIps = P("AllowedIPs"), Endpoint = Utf8(uplink?.Endpoint ?? profile.Endpoint), KeepAlive = uint.TryParse(profile.GetPeer("PersistentKeepalive"), out var keepAlive) ? keepAlive : 0 };
                 string ignored = string.Join(",", new[] { profile.GetInterface("IgnoredIPs"), profile.GetInterface("DisallowedIPs") }.Where(x => x.Length > 0));
                 var extra = new NativeExtra
                 {
                     Size = (nuint)Marshal.SizeOf<NativeExtra>(),
                     AllowedApps = Wide(allowedApps),
-                    DisallowedApps = Wide(profile.GetInterface("DisallowedApps")),
+                    DisallowedApps = Wide(disallowedApps),
                     IgnoredIps = Utf8(ignored),
                     Proxy = I("Socks5Proxy"), Username = I("Socks5ProxyUsername"), Password = I("Socks5ProxyPassword"), AllTraffic = I("Socks5ProxyAllTraffic")
                 };
                 if (createTunnel(handle, profile.Name, ref iface, ref peer, ref extra) == 0) throw NativeFailure("Create tunnel");
                 created = true;
-                if (networkLock && setNetworkLock(handle, 1) == 0) throw NativeFailure("Enable network lock");
+                uplink?.Verify();
+                if (networkLock)
+                {
+                    if (setNetworkLock(handle, 1) == 0) throw NativeFailure("Enable network lock");
+                    ownsNetworkLock = true;
+                }
                 if (startTunnel(handle) == 0) throw NativeFailure("Start tunnel");
+                uplink?.Verify();
                 // An active interface is not proof of a successful peer handshake. Inspect GetState()/traffic.
             }
-            catch { StopInternal(); throw; }
+            catch (Exception startupError)
+            {
+                try { StopInternal(); }
+                catch (Exception cleanupError) { throw new AggregateException("Tunnel startup and cleanup failed.", startupError, cleanupError); }
+                throw;
+            }
         }
     }
 
@@ -193,19 +214,39 @@ public sealed class WireSockTunnel : IDisposable
     public void Stop() { lock (gate) { CheckDisposed(); StopInternal(); } }
     private void StopInternal()
     {
+        Exception? nativeFailure = null;
+        try { StopNativeTunnel(); }
+        catch (Exception error) { nativeFailure = error; }
+        try
+        {
+            uplink?.Dispose();
+            uplink = null;
+        }
+        catch (Exception error) when (nativeFailure is not null)
+        {
+            throw new AggregateException("WireSock and temporary adapter route cleanup failed.", nativeFailure, error);
+        }
+        if (nativeFailure is not null) System.Runtime.ExceptionServices.ExceptionDispatchInfo.Throw(nativeFailure);
+    }
+
+    private void StopNativeTunnel()
+    {
+        var failures = new List<Exception>();
         if (handle != 0)
         {
             try
             {
                 if (created)
                 {
-                    stopTunnel(handle);
-                    // Always release a lock created by this handle when explicitly disconnecting.
-                    setNetworkLock(handle, 0);
-                    dropTunnel(handle, 0);
+                    if (getActive(handle) != 0 && stopTunnel(handle) == 0)
+                        failures.Add(NativeFailure("Stop tunnel"));
+                    if (ownsNetworkLock && setNetworkLock(handle, 0) == 0)
+                        failures.Add(NativeFailure("Disable network lock"));
+                    if (dropTunnel(handle, ownsNetworkLock ? 0 : 1) == 0)
+                        failures.Add(NativeFailure("Drop tunnel"));
                 }
             }
-            finally { releaseHandle(handle); handle = 0; created = false; }
+            finally { releaseHandle(handle); handle = 0; created = ownsNetworkLock = false; }
         }
         foreach (var allocation in allocatedStrings)
         {
@@ -216,6 +257,8 @@ public sealed class WireSockTunnel : IDisposable
         allocatedStrings.Clear();
         GC.KeepAlive(logger);
         GC.KeepAlive(eventLogger);
+        if (failures.Count > 0)
+            throw new AggregateException("WireSock did not confirm complete tunnel cleanup.", failures);
     }
 
     public void Dispose()
@@ -265,7 +308,7 @@ public sealed class WireSockTunnel : IDisposable
 
     private T Bind<T>(string name) where T : Delegate => Marshal.GetDelegateForFunctionPointer<T>(NativeLibrary.GetExport(library, name));
 
-    private static string FormatAllowedApps(string[] apps, string? fileVersion, bool forceComma)
+    private static string FormatAppList(string[] apps, string? fileVersion, bool forceComma)
     {
         // Both create_tunnel_ex exports in 3.4.8.1 split the list on commas despite the SDK guide.
         bool commaSeparated = fileVersion == "3.4.8.1" || forceComma;

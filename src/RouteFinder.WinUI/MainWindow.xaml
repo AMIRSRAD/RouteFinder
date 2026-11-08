@@ -62,12 +62,14 @@
                 <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
                 <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
                 <TextBlock Text="App router" FontSize="26" FontWeight="SemiBold" VerticalAlignment="Center" />
-                <StackPanel x:Name="HeaderActions" Grid.Column="1" Orientation="Horizontal" Spacing="6">
-                    <Button x:Name="AccountButton" Content="Sign in to EZConnect" Click="ToggleAccount" />
-                    <Button x:Name="ActivityButton" Content="Activity" Click="OpenActivity" />
-                    <Button x:Name="SettingsButton" Content="Settings" Click="OpenSettings" />
-                    <Button x:Name="AdvancedButton" Content="Advanced tools" Click="OpenAdvancedTools" />
-                </StackPanel>
+                <Grid x:Name="HeaderActions" Grid.Column="1" ColumnSpacing="6" RowSpacing="6">
+                    <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                    <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
+                    <Button x:Name="WindowsRoutingButton" Content="Windows routing" Click="OpenWindowsRouting" />
+                    <Button x:Name="ActivityButton" Grid.Column="1" Content="Activity" Click="OpenActivity" />
+                    <Button x:Name="SettingsButton" Grid.Column="2" Content="Settings" Click="OpenSettings" />
+                    <Button x:Name="AdvancedButton" Grid.Column="3" Content="Advanced tools" Click="OpenAdvancedTools" />
+                </Grid>
             </Grid>
 
             <InfoBar x:Name="Notice" Grid.Row="1" IsOpen="False" IsClosable="True" />
@@ -94,7 +96,7 @@
                                         <MenuFlyoutItem Text="Choose a running app" Click="PickRunningApp" />
                                         <MenuFlyoutItem Text="Choose a background process" Click="PickBackgroundApp" />
                                         <MenuFlyoutItem Text="Browse for an executable…" Click="BrowseForApp" />
-                                        <MenuFlyoutItem Text="Browse EZConnect game and app catalog…" Click="OpenCatalog" />
+                                        <MenuFlyoutItem x:Name="CatalogCommand" Text="Browse EZConnect game and app catalog…" Click="OpenCatalog" />
                                     </MenuFlyout>
                                 </Button.Flyout>
                             </Button>
@@ -152,16 +154,22 @@
                     <Grid RowSpacing="7">
                         <Grid.RowDefinitions>
                             <RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" />
-                            <RowDefinition Height="*" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" />
+                            <RowDefinition Height="*" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" />
                         </Grid.RowDefinitions>
                         <Grid ColumnSpacing="8">
                             <Grid.ColumnDefinitions><ColumnDefinition /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-                            <TextBlock Text="Route library" Style="{StaticResource SubtitleTextBlockStyle}" />
-                            <TextBlock Grid.Column="1" Text="LAST TEST" FontSize="10" CharacterSpacing="85"
-                                       Foreground="{StaticResource SubtleText}" VerticalAlignment="Center" />
+                            <TextBlock Text="Where to connect" Style="{StaticResource SubtitleTextBlockStyle}" VerticalAlignment="Center" />
+                            <Button x:Name="AddRouteButton" Grid.Column="1" Content="Add route">
+                                <Button.Flyout>
+                                    <MenuFlyout>
+                                        <MenuFlyoutItem x:Name="ImportRouteCommand" Text="Import WireGuard or Amnezia configuration…" Click="ImportConfig" />
+                                        <MenuFlyoutItem x:Name="AccountCommand" Text="Sign in to EZConnect…" Click="ToggleAccount" />
+                                    </MenuFlyout>
+                                </Button.Flyout>
+                            </Button>
                         </Grid>
                         <TextBox x:Name="RouteSearch" Grid.Row="1" PlaceholderText="Search routes, regions, or sources" AutomationProperties.Name="Search routes" />
-                        <Grid Grid.Row="2" ColumnSpacing="6">
+                        <Grid x:Name="RouteFilters" Grid.Row="2" ColumnSpacing="6">
                             <Grid.ColumnDefinitions><ColumnDefinition /><ColumnDefinition /><ColumnDefinition /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
                             <ComboBox x:Name="RouteFilter" HorizontalAlignment="Stretch" AutomationProperties.Name="Route source" />
                             <ComboBox x:Name="RouteRegion" Grid.Column="1" HorizontalAlignment="Stretch" AutomationProperties.Name="Route region" />
@@ -173,16 +181,21 @@
                                 <Style TargetType="ListViewItem"><Setter Property="HorizontalContentAlignment" Value="Stretch" /></Style>
                             </ListView.ItemContainerStyle>
                         </ListView>
+                        <StackPanel x:Name="EmptyRouteLibrary" Grid.Row="3" Spacing="6" Margin="0,12,0,0" Visibility="Collapsed">
+                            <TextBlock Text="No routes yet" FontWeight="SemiBold" />
+                            <TextBlock Text="Use Add route to import a configuration or sign in to a route provider." TextWrapping="Wrap"
+                                       Foreground="{StaticResource SubtleText}" />
+                        </StackPanel>
                         <TextBlock x:Name="RouteListSummary" Grid.Row="4" Foreground="{StaticResource SubtleText}" TextTrimming="CharacterEllipsis" />
-                        <StackPanel Grid.Row="5" Orientation="Horizontal" Spacing="6">
-                            <Button x:Name="AddRouteButton" Content="Add route">
-                                <Button.Flyout>
-                                    <MenuFlyout>
-                                        <MenuFlyoutItem Text="Import config…" Click="ImportConfig" />
-                                        <MenuFlyoutItem x:Name="AccountCommand" Text="Add EZConnect account…" Click="ToggleAccount" />
-                                    </MenuFlyout>
-                                </Button.Flyout>
+                        <Grid x:Name="InternetAdapterRow" Grid.Row="5" ColumnSpacing="8">
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                            <TextBlock Text="Internet adapter" VerticalAlignment="Center" />
+                            <Button x:Name="InternetAdapterButton" Grid.Column="1" HorizontalAlignment="Stretch" HorizontalContentAlignment="Left"
+                                    Click="OpenInternetAdapter" AutomationProperties.Name="Internet adapter">
+                                <TextBlock x:Name="InternetAdapterLabel" Text="Automatic" TextTrimming="CharacterEllipsis" />
                             </Button>
+                        </Grid>
+                        <StackPanel x:Name="RouteTestActions" Grid.Row="6" Orientation="Horizontal" Spacing="6">
                             <Button x:Name="TestRouteButton" Content="Test route" Click="TestSelectedRoute" />
                             <Button x:Name="TestAllButton" Content="Test all routes" Click="TestAllRoutes" />
                             <Button x:Name="RouteToolsButton" AutomationProperties.Name="More route tools"
@@ -207,6 +220,37 @@
                     </Grid>
                 </Border>
             </Grid>
+
+            <Border x:Name="WindowsRoutingPanel" Grid.Row="2" Grid.RowSpan="2" Style="{StaticResource Card}" Visibility="Collapsed">
+                <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                <StackPanel Spacing="12">
+                    <StackPanel Spacing="4">
+                        <TextBlock Text="Windows app routing" Style="{StaticResource SubtitleTextBlockStyle}" />
+                        <TextBlock x:Name="WindowsRoutingStatus" Foreground="{StaticResource AccentText}" AutomationProperties.LiveSetting="Polite" />
+                        <TextBlock x:Name="WindowsDefaultAdapter" Foreground="{StaticResource SubtleText}" TextWrapping="Wrap" />
+                        <ComboBox x:Name="WindowsFallbackAdapter" Header="Default adapter for unassigned apps"
+                                  HorizontalAlignment="Stretch" SelectionChanged="WindowsFallbackChanged" />
+                    </StackPanel>
+                    <StackPanel x:Name="WindowsRoutingTools" Orientation="Horizontal" Spacing="8">
+                        <Button x:Name="BrowseWindowsAppsButton" Content="Browse for apps…" Click="BrowseWindowsApps" />
+                        <Button x:Name="RefreshWindowsAdaptersButton" Content="Refresh adapters" Click="RefreshWindowsAdapters" />
+                    </StackPanel>
+                    <StackPanel Spacing="8">
+                        <Button Content="Routing profiles…" Click="ManageAppRoutingProfiles" />
+                        <Button Content="Live routing inspector…" Click="InspectAppRouting" />
+                        <Button Content="Interfaces and DNS…" Click="ManageInterfaces" />
+                    </StackPanel>
+                    <TextBlock Text="Choose an internet adapter for each app" FontWeight="SemiBold" TextWrapping="Wrap" />
+                    <StackPanel x:Name="WindowsAppRows" Spacing="8" />
+                    <StackPanel Spacing="8">
+                        <TextBlock x:Name="WindowsRoutingHint" Foreground="{StaticResource SubtleText}" TextWrapping="Wrap" />
+                        <StackPanel Orientation="Horizontal" Spacing="8">
+                            <Button x:Name="StartWindowsRoutingButton" Content="Save &amp; apply" Style="{StaticResource AccentButtonStyle}" Click="ToggleWindowsRouting" />
+                        </StackPanel>
+                    </StackPanel>
+                </StackPanel>
+                </ScrollViewer>
+            </Border>
 
             <Border x:Name="ConnectionBar" Grid.Row="3" Style="{StaticResource Card}" Padding="14,10" Background="#28203D">
                 <Grid ColumnSpacing="8">

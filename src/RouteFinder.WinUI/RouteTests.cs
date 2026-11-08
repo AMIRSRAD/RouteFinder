@@ -96,6 +96,11 @@ public sealed partial class MainWindow
 
     async Task RunRouteTests(RouteChoice[] choices)
     {
+        if (directRouting is not null)
+        {
+            Report("Stop Windows routing before running VPN route tests.", InfoBarSeverity.Informational);
+            return;
+        }
         var summaries = await CollectRouteTests(choices);
         if (exitRequested || summaries.Count == 0) return;
         if (choices.Length == 1 && measurements.TryGetValue(choices[0].Key, out var result) &&
@@ -119,6 +124,7 @@ public sealed partial class MainWindow
         {
             await Run("Testing routes…", async () =>
             {
+                bool measurementsChanged = false;
                 try
                 {
                     foreach (var choice in choices)
@@ -129,8 +135,7 @@ public sealed partial class MainWindow
                         {
                             var result = await MeasureRoute(choice, token);
                             measurements[choice.Key] = result with { TestedAt = DateTimeOffset.UtcNow };
-                            if (!preview && !unavailableStores.Contains("test results"))
-                                await Task.Run(() => ProfileStore.SaveMeasurements(measurements));
+                            measurementsChanged = true;
                             var details = FormatTest(result);
                             if (result.TcpReached is bool reached)
                                 details += reached ? " · TCP reached port 443; path unverified" : " · TCP probe did not connect";
@@ -150,6 +155,11 @@ public sealed partial class MainWindow
                 catch (OperationCanceledException) when (token.IsCancellationRequested)
                 {
                     Record("Tests canceled.");
+                }
+                finally
+                {
+                    if (measurementsChanged && !preview && !unavailableStores.Contains("test results"))
+                        await Task.Run(() => ProfileStore.SaveMeasurements(measurements));
                 }
             });
         }
@@ -184,7 +194,7 @@ public sealed partial class MainWindow
         var local = choice.Profile is { } profile ? TunnelProfile.Parse(profile.Configuration, profile.Name) : null;
         return await RunPacedProbe(choice, () => session.TestAsync(choice.Service, local, cancellation,
             preferences.PortableEngine, preferences.DnsOverride, preferences.AutoMtu, preferences.TunnelMtu,
-            preferences.KeepaliveSeconds, preferences.RouteTestSeconds, ConfiguredProxy), cancellation);
+            preferences.KeepaliveSeconds, preferences.RouteTestSeconds, ConfiguredProxy, UplinkFor(choice)), cancellation);
     }
 
     async Task<T> RunPacedProbe<T>(RouteChoice choice, Func<Task<T>> probe, CancellationToken cancellation)

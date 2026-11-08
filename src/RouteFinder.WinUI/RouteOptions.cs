@@ -1,3 +1,4 @@
+using System.Net.NetworkInformation;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.Windows.Storage.Pickers;
@@ -39,6 +40,71 @@ public sealed partial class MainWindow
         catch (Exception error) { Report(error.Message); }
 
         void Add(string label, Action action) => actions.Add((label, () => { action(); return Task.CompletedTask; }));
+    }
+
+    (string RouteKey, string? AdapterId)? appliedPresetUplink;
+    readonly Dictionary<string, string> adapterNames = new(StringComparer.OrdinalIgnoreCase);
+
+    string? UplinkFor(RouteChoice choice) => appliedPresetUplink is { } preset && preset.RouteKey == choice.Key
+        ? preset.AdapterId : preferences.RouteUplinks?.GetValueOrDefault(choice.Key);
+
+    string UplinkLabel(string? id)
+    {
+        if (id is null) return UiLanguage.Text("Automatic");
+        if (!adapterNames.TryGetValue(id, out string? name))
+        {
+            name = NetworkInterface.GetAllNetworkInterfaces().FirstOrDefault(adapter => adapter.Id == id)?.Name
+                ?? UiLanguage.Text("Saved adapter (unavailable)");
+            adapterNames[id] = name;
+        }
+        return name;
+    }
+
+    async void OpenInternetAdapter(object sender, RoutedEventArgs args)
+    {
+        if (preview || busy || Connected || session.NeedsCleanup || route is not { } selected) return;
+        try { await ChooseInternetAdapter(selected); }
+        catch (Exception error) { Report(error.Message); }
+    }
+
+    async Task ChooseInternetAdapter(RouteChoice choice)
+    {
+        var selected = UplinkFor(choice);
+        var options = new List<(string? Id, string Label)> { (null, "Automatic (Windows chooses)") };
+        options.AddRange(NetworkInterface.GetAllNetworkInterfaces()
+            .Where(adapter => adapter.NetworkInterfaceType is not (NetworkInterfaceType.Loopback or NetworkInterfaceType.Tunnel) &&
+                !adapter.Description.Contains("WireSock", StringComparison.OrdinalIgnoreCase))
+            .OrderByDescending(adapter => adapter.OperationalStatus == OperationalStatus.Up)
+            .ThenBy(adapter => adapter.Name, StringComparer.CurrentCultureIgnoreCase)
+            .Select(adapter => ((string?)adapter.Id, adapter.OperationalStatus == OperationalStatus.Up
+                ? adapter.Name : $"{adapter.Name} (disconnected)")));
+        if (selected is not null && !options.Any(option => option.Id == selected))
+            options.Add((selected, "Saved adapter (unavailable)"));
+
+        var picker = new ComboBox { Header = "Use this internet adapter", HorizontalAlignment = HorizontalAlignment.Stretch,
+            ItemsSource = options.Select(option => option.Label).ToArray(),
+            SelectedIndex = options.FindIndex(option => option.Id == selected) };
+        var panel = new StackPanel { Spacing = 10, MaxWidth = 420 };
+        panel.Children.Add(new TextBlock
+        {
+            Text = "Choose the connection that carries this route’s VPN tunnel, such as Ethernet, Wi-Fi, or a phone hotspot. This choice applies when you connect or test the route.",
+            TextWrapping = TextWrapping.Wrap
+        });
+        panel.Children.Add(picker);
+        var dialog = MakeDialog("Internet adapter", panel, "Save");
+        if (await dialog.ShowAsync() != ContentDialogResult.Primary || picker.SelectedIndex < 0) return;
+
+        var updated = new Dictionary<string, string>(preferences.RouteUplinks ?? []);
+        var option = options[picker.SelectedIndex];
+        if (option.Id is null) updated.Remove(choice.Key);
+        else updated[choice.Key] = option.Id;
+        var next = preferences with { RouteUplinks = updated };
+        WriteStore("preferences", () => ProfileStore.SavePreferences(next));
+        preferences = next;
+        appliedPresetUplink = null;
+        adapterNames.Clear();
+        Refresh();
+        Report($"{choice.Title} · Internet adapter: {option.Label}", InfoBarSeverity.Success);
     }
 
     void ToggleFavorite(RouteChoice choice)
@@ -104,14 +170,19 @@ public sealed partial class MainWindow
         var updated = apps.Concat(saved).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
         if (!preview && updated.Length != apps.Count)
             WriteStore("applications", () => ProfileStore.SaveApplications(updated.ToList()));
-        apps.Clear();
-        apps.AddRange(updated);
-        checkedApps.Clear();
-        checkedApps.UnionWith(saved);
+        ApplyProfileAppSelection(saved);
         SaveAppSelection();
         if (Scope.SelectedIndex == 1) Scope.SelectedIndex = 0;
         RenderApps();
         Refresh();
+    }
+
+    void ApplyProfileAppSelection(List<string> saved)
+    {
+        var existing = apps.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        apps.AddRange(saved.Where(existing.Add));
+        checkedApps.Clear();
+        checkedApps.UnionWith(saved);
     }
 
     async Task ExportConfig(SavedProfile profile)

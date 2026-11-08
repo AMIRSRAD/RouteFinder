@@ -150,6 +150,74 @@ await Check("Malformed service config cleans allocated session", async () =>
         Assert(count == 2 && error.Message.Contains("temporary session was released"), "No confirmed cleanup");
     }
 });
+await Check("Stalled cleanup response body leaves a retryable allocation", async () =>
+{
+    using var client = new EzConnectClient(new FakeHandler(request => Task.FromResult(
+        request.RequestUri!.AbsolutePath.EndsWith("/disconnect")
+            ? new HttpResponseMessage(HttpStatusCode.OK) { Content = new StreamContent(new StalledBody()) }
+            : Reply("""{"session_id":"stalled","config":{}}"""))), requestTimeout: TimeSpan.FromMilliseconds(250));
+    try
+    {
+        await client.ConnectAsync(route, publicKey, privateKey, "token").WaitAsync(TimeSpan.FromSeconds(3));
+        throw new Exception("Malformed profile was accepted.");
+    }
+    catch (PendingSessionCleanupException error)
+    {
+        Assert(error.SessionId == "stalled" && error.InnerException is OperationCanceledException,
+            "The cleanup timeout did not preserve the allocation ID for retry.");
+    }
+});
+await Check("Entire PC preserves provisioned destination ranges", async () =>
+{
+    const string restricted = "192.0.2.0/24";
+    using var connection = new ConnectionSession(new EzConnectClient(new FakeHandler(request => Task.FromResult(
+        Reply(request.RequestUri!.AbsolutePath switch
+        {
+            "/api/desktop/auth/refresh" => """{"access_token":"access","refresh_token":"refresh"}""",
+            "/api/desktop/bootstrap" => "{}",
+            "/api/desktop/sessions/connect" => GoodResponse().Replace("0.0.0.0/0", restricted + ",::/0"),
+            "/api/desktop/sessions/disconnect" => "{}",
+            _ => throw new InvalidOperationException("Unexpected service request.")
+        })))));
+    await connection.RestoreAsync("refresh");
+    var prepare = typeof(ConnectionSession).GetMethod("PrepareAsync",
+        System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!;
+    try
+    {
+        var profile = await (Task<RouteFinder.Core.TunnelProfile>)prepare.Invoke(connection,
+            [route with { HasIpv6 = true }, null, true, CancellationToken.None])!;
+        Assert(profile.GetPeer("AllowedIPs") == restricted, "Entire PC widened the provisioned IPv4 range or kept unusable IPv6 routes.");
+    }
+    finally { await connection.DisconnectAsync(); }
+});
+await Check("A restarted session retries recorded cleanup for its account", async () =>
+{
+    const string account = "fixture@example.test";
+    string? persisted = "previous-session";
+    using var connection = new ConnectionSession(new EzConnectClient(new FakeHandler(async request =>
+    {
+        switch (request.RequestUri!.AbsolutePath)
+        {
+            case "/api/desktop/auth/refresh":
+                return Reply("""{"access_token":"access","refresh_token":"refresh"}""");
+            case "/api/desktop/bootstrap":
+                return Reply("{}");
+            case "/api/desktop/sessions/disconnect":
+                Assert((await request.Content!.ReadAsStringAsync()).Contains("previous-session"), "Wrong session released.");
+                return Reply("{}");
+            default:
+                throw new InvalidOperationException("Unexpected service request.");
+        }
+    })), email => email == account ? persisted : null, (email, id) =>
+    {
+        Assert(email == account, "Cleanup was saved under the wrong account.");
+        persisted = id;
+    });
+    await connection.RestoreAsync("refresh", email: account);
+    Assert(connection.NeedsCleanup, "The recorded session was lost on restart.");
+    await connection.DisconnectAsync();
+    Assert(!connection.NeedsCleanup && persisted is null, "Confirmed release did not clear the recorded session.");
+});
 await Check("Mismatched keypair fails before request", async () =>
 {
     var count = 0; using var client = new EzConnectClient(new FakeHandler(_ => { count++; return Task.FromResult(Reply("{}")); }));
@@ -177,4 +245,13 @@ static HttpResponseMessage Reply(string json, HttpStatusCode status = HttpStatus
 sealed class FakeHandler(Func<HttpRequestMessage, Task<HttpResponseMessage>> handle) : HttpMessageHandler
 {
     protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken) => handle(request);
+}
+
+sealed class StalledBody : MemoryStream
+{
+    public override async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default)
+    {
+        await Task.Delay(Timeout.Infinite, cancellationToken);
+        return 0;
+    }
 }

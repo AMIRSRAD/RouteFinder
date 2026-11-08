@@ -14,9 +14,9 @@ public sealed class EzConnectClient : IDisposable
     static readonly Uri LoginOrigin = new("https://desktop-windows-app-login.ezconnect.ir");
     static readonly Uri PoolOrigin = new("https://desktop-windows-app.ezconnect.ir");
     const int MaxResponseBytes = 8 * 1024 * 1024;
-    public EzConnectClient(HttpMessageHandler? handler = null)
+    public EzConnectClient(HttpMessageHandler? handler = null, TimeSpan? requestTimeout = null)
     {
-        http = new HttpClient(handler ?? new HttpClientHandler { AllowAutoRedirect = false }, true) { Timeout = TimeSpan.FromSeconds(30) };
+        http = new HttpClient(handler ?? new HttpClientHandler { AllowAutoRedirect = false }, true) { Timeout = requestTimeout ?? TimeSpan.FromSeconds(30) };
         http.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
         http.DefaultRequestHeaders.Add("X-EzConnect-Version", "6.8.1");
         http.DefaultRequestHeaders.UserAgent.ParseAdd("RouteFinder/0.1");
@@ -226,6 +226,9 @@ public sealed class EzConnectClient : IDisposable
 
     async Task<JsonElement> Send(HttpMethod method, Uri origin, string path, object? payload, string? accessToken, CancellationToken ct, bool allowEmpty = false)
     {
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        deadline.CancelAfter(http.Timeout);
+        ct = deadline.Token;
         using var request = new HttpRequestMessage(method, new Uri(origin, path));
         if (payload != null) request.Content = JsonContent.Create(payload);
         if (accessToken != null) request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);

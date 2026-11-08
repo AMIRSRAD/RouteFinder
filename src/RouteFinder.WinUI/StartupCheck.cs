@@ -19,9 +19,13 @@ public sealed partial class MainWindow
                 new SavedProfile { Name = "Preferred route", Configuration = "Fixture", Applications = [selected] }]);
             ProfileStore.SaveApplications([selected, uncheckedApp, olderApp]);
             ProfileStore.SavePreferences(new(false, ["local:Preferred route"], LastConnectedRoute: "local:Preferred route",
-                UncheckedApplications: [uncheckedApp]));
+                UncheckedApplications: [uncheckedApp],
+                RouteUplinks: new() { ["local:Preferred route"] = "fixture-uplink" },
+                DirectAppAdapters: new() { [selected] = "fixture-direct-adapter" },
+                DirectFallbackAdapter: "fixture-fallback" ));
             ProfileStore.SaveMeasurements(new() { ["local:Preferred route"] = new("Fixture", true, 28, 3) });
-            ProfileStore.SavePresets([new("Browser test", "local:Existing profile", "Existing profile", false, [olderApp], null, BlockOtherApps: true)]);
+            ProfileStore.SavePresets([new("Browser test", "local:Existing profile", "Existing profile", false, [olderApp], null,
+                BlockOtherApps: true, AdapterId: "preset-uplink", HasAdapterChoice: true)]);
             UiLanguage.Save(1);
             window = new MainWindow(preview: false, verifyStartup: true);
             var loaded = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -35,12 +39,68 @@ public sealed partial class MainWindow
                 window.Scope.Items[0] is not string label || label == "Selected apps")
                 throw new InvalidOperationException("The saved Persian preference was not applied to the startup layout.");
             if ((window.RouteList.SelectedItem as RoutePickerRow) is not { Title: "★ Preferred route", Result: "28 ms" } ||
-                !window.checkedApps.SetEquals([selected, olderApp]) || window.route is null || !window.IsFavorite(window.route))
+                !window.checkedApps.SetEquals([selected]) || window.route is null || !window.IsFavorite(window.route))
                 throw new InvalidOperationException("The normal startup path did not restore the route, tests, favorite and checked apps.");
+            if (window.RouteFilter.ItemsSource is not string[] sources || !sources.SequenceEqual(["All sources", "Imported configs"]))
+                throw new InvalidOperationException("The source filter must reflect the routes in the library.");
+            if (window.UplinkFor(window.route) != "fixture-uplink" ||
+                window.UplinkFor(window.Routes().Single(item => item.Key == "local:Existing profile")) is not null)
+                throw new InvalidOperationException("The saved internet adapter must apply only to its own route.");
+            if (window.preferences.DirectAppAdapters?.GetValueOrDefault(selected) != "fixture-direct-adapter" ||
+                window.directRouting is not null || !window.WindowsRoutingButton.IsEnabled)
+                throw new InvalidOperationException("Windows app assignments should load without starting routing.");
+            window.OpenWindowsRouting(window.WindowsRoutingButton, new Microsoft.UI.Xaml.RoutedEventArgs());
+            if (window.WindowsFallbackAdapter.SelectedItem is not WindowsAdapterChoice { Id: "fixture-fallback", HasGateway: false })
+                throw new InvalidOperationException("The saved fallback should remain visible when its adapter is unavailable.");
+            if (window.WindowsRoutingPanel.Visibility != Microsoft.UI.Xaml.Visibility.Visible ||
+                window.Cards.Visibility != Microsoft.UI.Xaml.Visibility.Collapsed ||
+                window.WindowsAppRows.Children.Count != 1 ||
+                window.windowsAppDraft?.GetValueOrDefault(selected) != "fixture-direct-adapter" ||
+                window.windowsAppDraft?.ContainsKey(olderApp) != false || window.StartWindowsRoutingButton.IsEnabled)
+                throw new InvalidOperationException("Windows routing must import checked apps, preserve saved assignments, and reject missing adapters.");
+            var originalSize = window.AppWindow.Size;
+            var compact = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            void OnCompact(object sender, Microsoft.UI.Xaml.SizeChangedEventArgs args)
+            {
+                if (args.NewSize.Width < 460) compact.TrySetResult();
+            }
+            window.Workspace.SizeChanged += OnCompact;
+            try
+            {
+                window.AppWindow.Resize(new Windows.Graphics.SizeInt32(420, 460));
+                await compact.Task.WaitAsync(TimeSpan.FromSeconds(5));
+                if (Grid.GetRow(window.SettingsButton) != 1 || Grid.GetRow(window.AdvancedButton) != 1)
+                    throw new InvalidOperationException("The toolbar must wrap at narrow window widths.");
+            }
+            finally
+            {
+                window.Workspace.SizeChanged -= OnCompact;
+                window.AppWindow.Resize(originalSize);
+            }
+            window.OpenWindowsRouting(window.WindowsRoutingButton, new Microsoft.UI.Xaml.RoutedEventArgs());
+            if (window.Cards.Visibility != Microsoft.UI.Xaml.Visibility.Visible || window.route.Key != "local:Preferred route")
+                throw new InvalidOperationException("Returning from Windows routing should restore the VPN workspace selection.");
+            const string addedApp = @"C:\Games\added.exe";
+            window.AddApplications([addedApp]);
+            if (window.windowsAppDraft?.GetValueOrDefault(addedApp) != "")
+                throw new InvalidOperationException("Adding an app must update the Windows routing suggestions immediately.");
+            window.checkedApps.Remove(addedApp);
+            window.Refresh();
+            if (window.windowsAppDraft.ContainsKey(addedApp))
+                throw new InvalidOperationException("Unchecking an app must remove its suggestion.");
+            window.checkedApps.Add(addedApp);
+            window.Refresh();
+            if (!window.windowsAppDraft.ContainsKey(addedApp))
+                throw new InvalidOperationException("Rechecking an app must restore its suggestion.");
+            window.RemoveApplication(addedApp);
+            if (window.windowsAppDraft.ContainsKey(addedApp) ||
+                window.windowsAppDraft.GetValueOrDefault(selected) != "fixture-direct-adapter")
+                throw new InvalidOperationException("Removing an app must remove its suggestion and preserve other assignments.");
             var row = (Grid)window.AppRows.Children[0];
             row.Children.OfType<CheckBox>().Single().IsChecked = false;
+            await Task.Delay(300);
             var uncheckedPaths = ProfileStore.LoadPreferences().UncheckedApplications ?? [];
-            if (!uncheckedPaths.ToHashSet(StringComparer.OrdinalIgnoreCase).SetEquals([selected, uncheckedApp]))
+            if (!uncheckedPaths.ToHashSet(StringComparer.OrdinalIgnoreCase).SetEquals([selected, uncheckedApp, olderApp]))
                 throw new InvalidOperationException("Unchecking an app did not save the traffic selection.");
             window.RouteList.SelectedItem = window.RouteList.Items.OfType<RoutePickerRow>()
                 .Single(item => item.Key == "local:Existing profile");
@@ -53,6 +113,9 @@ public sealed partial class MainWindow
             window.ApplyPreset(window.presets.Single());
             if (window.route?.Key != "local:Existing profile" || !window.checkedApps.SetEquals([olderApp]) || window.Connected)
                 throw new InvalidOperationException("Applying the saved preset did not restore its route and app scope without connecting.");
+            if (window.UplinkFor(window.route!) != "preset-uplink" ||
+                window.preferences.RouteUplinks?.ContainsKey("local:Existing profile") == true)
+                throw new InvalidOperationException("The preset must restore its adapter without rewriting the route default.");
             if (!window.BlocksOtherApps || !window.UseNetworkLock(console: false) || window.UseNetworkLock(console: true))
                 throw new InvalidOperationException($"The strict preset selected scope {window.Scope.SelectedIndex} or requested the wrong network lock.");
             if (ProfileStore.LoadPreferences() is not { BlockOtherApps: true, EntirePcMode: false })
@@ -62,6 +125,15 @@ public sealed partial class MainWindow
             {
                 if (!restored.BlocksOtherApps)
                     throw new InvalidOperationException("Startup did not restore Selected apps only.");
+                restored.profiles.Clear();
+                restored.route = null;
+                restored.Refresh();
+                if (restored.EmptyRouteLibrary.Visibility != Microsoft.UI.Xaml.Visibility.Visible ||
+                    restored.RouteList.Visibility != Microsoft.UI.Xaml.Visibility.Collapsed ||
+                    !restored.AddRouteButton.IsEnabled || !restored.ImportRouteCommand.IsEnabled ||
+                    !restored.AccountCommand.IsEnabled || restored.ConnectButton.IsEnabled ||
+                    restored.CatalogCommand.Visibility != Microsoft.UI.Xaml.Visibility.Collapsed)
+                    throw new InvalidOperationException("An empty route library must offer import and provider sign-in without a catalog.");
             }
             finally { restored.Close(); }
             window.Scope.SelectedIndex = 0;
@@ -75,6 +147,18 @@ public sealed partial class MainWindow
             window.Refresh();
             if (window.timer.IsEnabled)
                 throw new InvalidOperationException("Stopping app-launch watching should stop idle polling.");
+            window.windowsAppDraft![selected] = "fixture-uplink";
+            window.appVpnDraft[selected] = "local:Preferred route";
+            var routerProfile = new ProfileStore.AppRoutingProfile("Gaming", new(window.windowsAppDraft),
+                new(window.appVpnDraft), window.windowsFallbackDraft);
+            window.preferences = window.preferences with { AppRoutingProfiles = [routerProfile] };
+            if (!window.StoreWindowsAppRules()) throw new InvalidOperationException("Could not persist the unified router draft.");
+            var savedRouter = ProfileStore.LoadPreferences();
+            var savedProfile = savedRouter.AppRoutingProfiles?.Single();
+            if (savedRouter.AppVpnRoutes?.GetValueOrDefault(selected) != "local:Preferred route" ||
+                savedProfile?.Adapters.GetValueOrDefault(selected) != "fixture-uplink" ||
+                savedProfile?.DefaultAdapter != "fixture-fallback")
+                throw new InvalidOperationException("The routing profile lost its VPN route, uplink, or default adapter.");
             File.WriteAllText(Path.Combine(directory.FullName, "preferences.dat"), "unreadable fixture");
             var recovery = new MainWindow(preview: false, verifyStartup: true);
             try

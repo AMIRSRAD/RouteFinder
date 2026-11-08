@@ -32,7 +32,6 @@ public sealed partial class MainWindow
 
     void ApplyActionIcons()
     {
-        AddIcon(AccountButton, "\uE77B");
         AddIcon(ActivityButton, "\uE9D9");
         AddIcon(SettingsButton, "\uE713");
         AddIcon(AdvancedButton, "\uE90F");

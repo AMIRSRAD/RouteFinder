@@ -10,6 +10,7 @@
     <AssemblyName>RouteFinder</AssemblyName>
   </PropertyGroup>
   <ItemGroup>
+    <Compile Include="../RouteFinder.WinUI/LaunchInstance.cs" Link="Shared/LaunchInstance.cs" />
     <ProjectReference Include="../RouteFinder.Core/RouteFinder.Core.csproj" />
     <ProjectReference Include="../RouteFinder.Service/RouteFinder.Service.csproj" />
   </ItemGroup>

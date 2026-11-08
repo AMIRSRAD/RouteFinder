@@ -9,7 +9,7 @@ namespace RouteFinder.App;
 
 internal sealed partial class MainForm : Form
 {
-    readonly ConnectionSession connection = new(new EzConnectClient());
+    readonly ConnectionSession connection = new(new EzConnectClient(), ProfileStore.LoadAllocation, ProfileStore.SaveAllocation);
     readonly Panel workspace = new() { Dock = DockStyle.Fill, Margin = Padding.Empty };
     readonly Panel routePage = new() { Dock = DockStyle.Fill };
     readonly Panel appsPage = new() { Dock = DockStyle.Fill };
@@ -173,7 +173,7 @@ internal sealed partial class MainForm : Form
         grid.SelectionChanged += (_, _) => { if (!populating) SelectRow(); };
         apps.ItemCheck += (_, _) =>
         {
-            if (!populating && IsHandleCreated) BeginInvoke((Action)(() => { UpdateApps(); SaveApps(); }));
+            if (!populating && !loadingPreferences && IsHandleCreated) BeginInvoke((Action)(() => { UpdateApps(); SaveApps(); }));
         };
         timer.Tick += async (_, _) =>
         {
@@ -1181,12 +1181,13 @@ internal sealed partial class MainForm : Form
             showTutorials.Checked = preferences.ShowTutorials;
             dnsOverride.Text = preferences.DnsOverride;
             routingMode.SelectedIndex = preferences.EntirePcMode ? 1 : 0;
-            loadingPreferences = false;
             foreach (var pair in ProfileStore.LoadMeasurements()) measurements[pair.Key] = pair.Value;
+            var uncheckedPaths = (preferences.UncheckedApplications ?? []).ToHashSet(StringComparer.OrdinalIgnoreCase);
             foreach (var path in ProfileStore.LoadApplications() ?? profiles.SelectMany(item => item.Applications).Distinct(StringComparer.OrdinalIgnoreCase).ToList())
-                apps.Items.Add(path, true);
+                apps.Items.Add(path, !uncheckedPaths.Contains(path));
         }
         catch (Exception error) { WriteActivity("Could not load local settings. " + error.Message); }
+        finally { loadingPreferences = false; }
         WriteActivity("RouteFinder is ready. Sign in or import a local profile.");
     }
 
@@ -1930,7 +1931,7 @@ internal sealed partial class MainForm : Form
                     refreshed = true;
                     try { ProfileStore.SaveLogin(saved.Email, token); }
                     catch (Exception error) { WriteActivity("Could not save the refreshed sign-in. " + error.Message); }
-                }));
+                }, saved.Email));
                 signedInEmail = saved.Email;
                 rememberCurrentSignIn = true;
                 WriteActivity("Remembered sign-in restored and route catalog refreshed.");
@@ -2717,8 +2718,16 @@ internal sealed partial class MainForm : Form
 
     void SaveApps()
     {
-        if (preview) return;
-        try { ProfileStore.SaveApplications(apps.CheckedItems.Cast<string>().ToList()); }
+        if (preview || loadingPreferences) return;
+        try
+        {
+            var paths = apps.Items.Cast<string>().ToList();
+            var selected = apps.CheckedItems.Cast<string>().ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var updated = preferences with { UncheckedApplications = paths.Where(path => !selected.Contains(path)).ToArray() };
+            ProfileStore.SavePreferences(updated);
+            preferences = updated;
+            ProfileStore.SaveApplications(paths);
+        }
         catch (Exception error) { WriteActivity("Could not save app selections. " + error.Message); }
     }
 

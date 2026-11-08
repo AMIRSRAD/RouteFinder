@@ -24,8 +24,10 @@ internal static class ProfileStore
     static string MeasurementsPath => Path.Combine(DirectoryPath, "route-tests.dat");
     static string PresetsPath => Path.Combine(DirectoryPath, "presets.dat");
     internal sealed record RememberedLogin(string Email, string RefreshToken);
+    internal sealed record AppRoutingProfile(string Name, Dictionary<string, string> Adapters,
+        Dictionary<string, string> VpnRoutes, string? DefaultAdapter);
     internal sealed record RoutingPreset(string Name, string RouteKey, string RouteName, bool EntirePc, string[] Apps, string? CatalogGame,
-        bool BlockOtherApps = false);
+        bool BlockOtherApps = false, string? AdapterId = null, bool HasAdapterChoice = false);
     internal sealed record Preferences(bool MinimizeToTray, List<string> Favorites, bool EntirePcMode = false,
         bool KillSwitch = false, bool PortableEngine = false, string DnsOverride = "",
         bool Ipv6PreferenceConfigured = false, bool EnableIpv6Bindings = false, bool AutoMtu = false,
@@ -34,7 +36,10 @@ internal static class ProfileStore
         int? KeepaliveSeconds = null, string[]? ExcludedApplications = null, int? TunnelMtu = null,
         string? LastConnectedRoute = null, int PeerResponseSeconds = 25, int RouteTestSeconds = 20,
         int RouteSortMetric = 0, string SocksProxyOverride = "", ProxyOverride? SocksProxyCredentials = null,
-        bool RecoverStoppedTunnel = false, string[]? UncheckedApplications = null, bool BlockOtherApps = false);
+        bool RecoverStoppedTunnel = false, string[]? UncheckedApplications = null, bool BlockOtherApps = false,
+        Dictionary<string, string>? RouteUplinks = null, Dictionary<string, string>? DirectAppAdapters = null,
+        string? DirectFallbackAdapter = null, Dictionary<string, string>? AppVpnRoutes = null,
+        List<AppRoutingProfile>? AppRoutingProfiles = null);
 
     public static Preferences LoadPreferences() => File.Exists(PreferencesPath)
         ? JsonSerializer.Deserialize<Preferences>(Protect(File.ReadAllBytes(PreferencesPath), false)) ?? new(false, []) : new(false, []);
@@ -61,6 +66,19 @@ internal static class ProfileStore
 
     public static void SaveLogin(string email, string refreshToken) => SaveProtected(LoginPath, new RememberedLogin(email, refreshToken));
     public static void ClearLogin() { if (File.Exists(LoginPath)) File.Delete(LoginPath); }
+    static string CleanupPath(string email) => Path.Combine(DirectoryPath, "cleanup-" +
+        Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(Encoding.UTF8.GetBytes(email.Trim().ToUpperInvariant()))) + ".dat");
+    public static string? LoadAllocation(string email)
+    {
+        var path = CleanupPath(email);
+        return File.Exists(path) ? JsonSerializer.Deserialize<string>(Protect(File.ReadAllBytes(path), false)) : null;
+    }
+    public static void SaveAllocation(string email, string? id)
+    {
+        var path = CleanupPath(email);
+        if (id is null) File.Delete(path);
+        else SaveProtected(path, id);
+    }
     public static List<SavedProfile> Load() => File.Exists(FilePath)
         ? JsonSerializer.Deserialize<List<SavedProfile>>(Protect(File.ReadAllBytes(FilePath), false)) ?? [] : [];
     public static void Save(List<SavedProfile> profiles)

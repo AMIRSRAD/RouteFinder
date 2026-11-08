@@ -35,9 +35,10 @@ public sealed partial class MainWindow
                 (selected.CatalogGame is null || FindPresetGame(selected) is not null);
             dialog.IsPrimaryButtonEnabled = available;
             remove.IsEnabled = selected is not null;
-            details.Text = selected is null ? "Save a route and traffic selection to reuse it later." :
-                $"{selected.RouteName}\n" +
-                (selected.EntirePc ? "Entire PC" : string.Join(", ", selected.Apps.Select(Path.GetFileNameWithoutExtension))) +
+            details.Text = selected is null ? "Save the current apps, route, and internet adapter as a setup." :
+                $"Apps · {(selected.EntirePc ? "Entire PC" : string.Join(", ", selected.Apps.Select(Path.GetFileNameWithoutExtension)))}\n" +
+                $"Route · {selected.RouteName}\n" +
+                $"Internet adapter · {(selected.HasAdapterChoice ? UplinkLabel(selected.AdapterId) : "Route default")}" +
                 (selected.BlockOtherApps ? "\nOther apps are blocked while connected." : "") +
                 (selected.CatalogGame is null ? "" : $"\nCatalog: {selected.CatalogGame}") +
                 (available ? "" : "\nThis setup is unavailable. Load its route and catalog before applying it.");
@@ -85,7 +86,8 @@ public sealed partial class MainWindow
         };
         if (await dialog.ShowAsync() != ContentDialogResult.Primary) return;
         SavePresets([.. presets, new(name.Text.Trim(), selected.Key, selected.Title, entirePc, paths,
-            entirePc || selected.Service is null ? null : selectedGame?.Name, BlockOtherApps: BlocksOtherApps)]);
+            entirePc || selected.Service is null ? null : selectedGame?.Name, BlockOtherApps: BlocksOtherApps,
+            AdapterId: UplinkFor(selected), HasAdapterChoice: true)]);
         Report("Routing preset saved.", InfoBarSeverity.Success);
     }
 
@@ -114,6 +116,7 @@ public sealed partial class MainWindow
         checkedApps.Clear();
         checkedApps.UnionWith(preset.Apps);
         route = selected;
+        appliedPresetUplink = preset.HasAdapterChoice ? (selected.Key, preset.AdapterId) : null;
         selectedGame = game;
         Scope.SelectedIndex = ScopeIndex(preset.EntirePc, preset.BlockOtherApps);
         SaveAppSelection();

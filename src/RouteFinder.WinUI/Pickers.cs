@@ -26,11 +26,18 @@ public sealed partial class MainWindow
 
     void InitializeRouteBrowser()
     {
-        RouteFilter.ItemsSource = new[] { "All sources", "EZConnect games", "Downloads", "Imported configs" };
-        RouteFilter.SelectedIndex = 0;
         RouteSort.ItemsSource = new[] { "Latency", "Packet loss", "Name" };
         RouteSort.SelectedIndex = Math.Clamp(preferences.RouteSortMetric, 0, 2);
-        RouteSearch.TextChanged += (_, _) => RefreshRouteBrowser();
+        var searchDelay = DispatcherQueue.CreateTimer();
+        searchDelay.Interval = TimeSpan.FromMilliseconds(150);
+        searchDelay.IsRepeating = false;
+        searchDelay.Tick += (_, _) => RefreshRouteBrowser();
+        RouteSearch.TextChanged += (_, _) =>
+        {
+            searchDelay.Stop();
+            searchDelay.Start();
+        };
+        Closed += (_, _) => searchDelay.Stop();
         RouteFilter.SelectionChanged += (_, _) => RefreshRouteBrowser();
         RouteRegion.SelectionChanged += (_, _) => RefreshRouteBrowser();
         RouteFavorites.Checked += (_, _) => RefreshRouteBrowser();
@@ -61,7 +68,20 @@ public sealed partial class MainWindow
         try
         {
             var library = Routes().ToArray();
+            bool empty = library.Length == 0;
+            EmptyRouteLibrary.Visibility = empty ? Visibility.Visible : Visibility.Collapsed;
+            RouteSearch.Visibility = RouteFilters.Visibility = RouteList.Visibility =
+                RouteListSummary.Visibility = RouteTestActions.Visibility = empty ? Visibility.Collapsed : Visibility.Visible;
+            string[] sources = ["All sources", .. library.Select(item => item.Profile is not null
+                ? "Imported configs" : item.Service is { IsDownload: true } ? "EZConnect downloads" : "EZConnect games")
+                .Distinct()];
             string filter = RouteFilter.SelectedItem as string ?? "All sources";
+            if (RouteFilter.ItemsSource is not string[] previousSources || !previousSources.SequenceEqual(sources))
+            {
+                RouteFilter.ItemsSource = sources;
+                filter = sources.Contains(filter) ? filter : sources[0];
+                RouteFilter.SelectedItem = filter;
+            }
             string region = RouteRegion.SelectedItem as string ?? "All regions";
             var regions = new[] { "All regions" }.Concat(library.Select(item => item.Service?.RegionCode)
                 .OfType<string>().Where(code => code.Length > 0)
@@ -79,7 +99,7 @@ public sealed partial class MainWindow
                 (RouteFavorites.IsChecked != true || IsFavorite(item))).Where(item => filter switch
                 {
                     "EZConnect games" => item.Service is { IsDownload: false },
-                    "Downloads" => item.Service is { IsDownload: true },
+                    "EZConnect downloads" => item.Service is { IsDownload: true },
                     "Imported configs" => item.Profile is not null,
                     _ => true
                 });
@@ -104,8 +124,7 @@ public sealed partial class MainWindow
             RouteFavorites.Content = RouteFavorites.IsChecked == true ? "★" : "☆";
             string selection = route is null ? "Select a route" : selectedRow is null
                 ? $"Selected route outside filters: {route.Title}" : $"Selected: {route.Title}";
-            RouteListSummary.Text = library.Length == 0 ? "Import a config or sign in to load EZConnect routes."
-                : $"{rows.Length} of {library.Length} routes · {selection}";
+            RouteListSummary.Text = $"{rows.Length} of {library.Length} routes · {selection}";
             ToolTipService.SetToolTip(RouteListSummary, RouteListSummary.Text);
             TestShortlistButton.IsEnabled = rows.Length > 0 && !busy && !Connected && !session.NeedsCleanup;
         }
@@ -266,6 +285,10 @@ public sealed partial class MainWindow
                 var first = updated[profiles.Count];
                 WriteStore("profiles", () => ProfileStore.Save(updated));
                 profiles.AddRange(updated.Skip(profiles.Count).ToArray());
+                RouteSearch.Text = "";
+                RouteFilter.SelectedIndex = 0;
+                RouteRegion.SelectedIndex = 0;
+                RouteFavorites.IsChecked = false;
                 SelectRoute(Routes().First(item => item.Profile == first));
                 AddActivity($"Imported {imported} configuration(s).");
             }
@@ -281,6 +304,7 @@ public sealed partial class MainWindow
     void SelectRoute(RouteChoice? selected)
     {
         if (route?.Key == selected?.Key) return;
+        appliedPresetUplink = null;
         route = selected;
         if (Scope.SelectedIndex != 1 && selected?.Profile is { Applications.Count: > 0 } profile)
         {

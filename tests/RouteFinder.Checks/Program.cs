@@ -71,6 +71,20 @@ Check("load/bind/dispose installed SDK without creating handle", () =>
     tunnel.Dispose();
     tunnel.Dispose();
 });
+Check("Windows connection policy structs match the x64 SDK layout", () =>
+{
+    foreach (var (name, size, member, offset) in new[]
+    {
+        ("Session", 72, "Sid", 48), ("ProviderContext", 88, "Settings", 72),
+        ("Condition", 40, "Value", 24), ("PolicySetting", 24, "Value", 8),
+        ("PolicySettings", 16, "Items", 8)
+    })
+    {
+        var type = typeof(DirectAppRouting).GetNestedType(name, BindingFlags.NonPublic)!;
+        Require(Marshal.SizeOf(type) == size && Marshal.OffsetOf(type, member).ToInt32() == offset,
+            $"{name} layout does not match the Windows SDK.");
+    }
+});
 Check("reject relative app paths before native handle creation", () =>
 {
     using var tunnel = new WireSockTunnel();
@@ -82,13 +96,14 @@ Check("marshal app lists using the installed SDK version's separator", () =>
 {
     using var tunnel = new WireSockTunnel();
     var wide = typeof(WireSockTunnel).GetMethod("Wide", BindingFlags.Instance | BindingFlags.NonPublic)!;
-    var format = typeof(WireSockTunnel).GetMethod("FormatAllowedApps", BindingFlags.Static | BindingFlags.NonPublic)!
+    var format = typeof(WireSockTunnel).GetMethod("FormatAppList", BindingFlags.Static | BindingFlags.NonPublic)!
         .CreateDelegate<Func<string[], string?, bool, string>>();
     string[] paths = [@"C:\Telegram Desktop\Telegram.exe", @"C:\Apps\Discord.exe"];
     const string version = "3.4.8.1";
     nint allowed = (nint)wide.Invoke(tunnel, [format(paths, version, false)])!;
     Require(Marshal.PtrToStringUni(allowed) == string.Join(',', paths),
         "WireSock 3.4.8.1 must receive two comma-separated full paths.");
+    Require(format([@"C:\", @"D:\"], version, false) == @"C:\,D:\", "Console exclusions must use the same separator.");
     Require(format(paths, null, false) == string.Join('|', paths), "Unverified SDKs use the documented separator.");
     Require(format(paths, null, true) == string.Join(',', paths), "The diagnostic switch must force the comma separator.");
     Require(format([paths[0]], version, false) == paths[0], "A single path needs no delimiter.");
@@ -97,6 +112,38 @@ Check("marshal app lists using the installed SDK version's separator", () =>
     try { format([@"C:\Apps, Inc\Telegram.exe"], version, false); }
     catch (ArgumentException) { return; }
     throw new Exception("A comma within a path would be parsed as a second app rule.");
+});
+Check("teardown preserves unowned locks and reports cleanup failures", () =>
+{
+    foreach (bool ownsLock in new[] { false, true })
+    {
+        using var tunnel = new WireSockTunnel();
+        var native = new CleanupFixture();
+        FieldInfo Field(string name) => typeof(WireSockTunnel).GetField(name, BindingFlags.Instance | BindingFlags.NonPublic)!;
+        void Replace(string name, string method)
+        {
+            var field = Field(name);
+            field.SetValue(tunnel, Delegate.CreateDelegate(field.FieldType, native, method));
+        }
+        Replace("getActive", nameof(CleanupFixture.Active));
+        Replace("stopTunnel", nameof(CleanupFixture.Stop));
+        Replace("setNetworkLock", nameof(CleanupFixture.Unlock));
+        Replace("dropTunnel", nameof(CleanupFixture.Drop));
+        Replace("releaseHandle", nameof(CleanupFixture.Release));
+        Field("handle").SetValue(tunnel, (nint)1);
+        Field("created").SetValue(tunnel, true);
+        Field("ownsNetworkLock").SetValue(tunnel, ownsLock);
+
+        try { tunnel.Stop(); throw new Exception("Cleanup reported success."); }
+        catch (AggregateException error)
+        {
+            Require(error.InnerExceptions.Count == (ownsLock ? 3 : 2), "Cleanup failures were lost.");
+        }
+        Require(native.Calls.SequenceEqual(ownsLock
+            ? ["stop", "unlock:0", "drop:0", "release"] : ["stop", "drop:1", "release"]),
+            "Cleanup did not respect lock ownership or skipped a step.");
+        Require(!tunnel.IsActive, "The released native handle is still owned.");
+    }
 });
 Check("reject empty app selection before native handle creation", () =>
 {
@@ -107,3 +154,13 @@ Check("reject empty app selection before native handle creation", () =>
 });
 Console.WriteLine($"{passed} passed; {failed} failed. No native handle was created and no tunnel was started.");
 return failed == 0 ? 0 : 1;
+
+sealed class CleanupFixture
+{
+    public List<string> Calls { get; } = [];
+    public int Active(nint _) => 1;
+    public int Stop(nint _) { Calls.Add("stop"); return 0; }
+    public int Unlock(nint _, int mode) { Calls.Add($"unlock:{mode}"); return 0; }
+    public int Drop(nint _, int preserve) { Calls.Add($"drop:{preserve}"); return 0; }
+    public void Release(nint _) => Calls.Add("release");
+}

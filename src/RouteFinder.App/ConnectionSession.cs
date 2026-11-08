@@ -4,9 +4,11 @@ using RouteFinder.Service;
 
 namespace RouteFinder.App;
 
-internal sealed class ConnectionSession(EzConnectClient client) : IDisposable
+internal sealed class ConnectionSession(EzConnectClient client, Func<string, string?>? loadAllocation = null,
+    Action<string, string?>? saveAllocation = null) : IDisposable
 {
     AuthTokens? tokens;
+    string? accountEmail;
     string? allocation;
     WireSockTunnel? tunnel;
     public event Action<string>? Diagnostic;
@@ -14,6 +16,8 @@ internal sealed class ConnectionSession(EzConnectClient client) : IDisposable
     public bool SignedIn => tokens != null;
     public bool HasTunnel => tunnel != null;
     public bool TunnelIsActive => tunnel?.IsActive == true;
+    public bool HasSelectedUplink => tunnel?.UplinkName is not null;
+    public bool UplinkIsCurrent => tunnel?.UplinkIsCurrent ?? true;
     public bool PeerResponseObserved => tunnel?.HandshakeResponseObserved == true;
     public string? ActiveMtu { get; private set; }
     public string? ActiveKeepalive { get; private set; }
@@ -31,18 +35,32 @@ internal sealed class ConnectionSession(EzConnectClient client) : IDisposable
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(45));
         var authenticated = await client.LoginAsync(email, password, device, deadline.Token);
         var catalog = await client.BootstrapAsync(authenticated.AccessToken, deadline.Token);
-        tokens = authenticated;
+        SetAccount(authenticated, email);
         return catalog;
     }
 
-    public async Task<BootstrapData> RestoreAsync(string refreshToken, Action<string>? onRefreshed = null)
+    public async Task<BootstrapData> RestoreAsync(string refreshToken, Action<string>? onRefreshed = null, string? email = null)
     {
         using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(45));
         var restored = await client.RefreshAsync(refreshToken, deadline.Token);
         onRefreshed?.Invoke(restored.RefreshToken);
         var catalog = await client.BootstrapAsync(restored.AccessToken, deadline.Token);
-        tokens = restored;
+        SetAccount(restored, email);
         return catalog;
+    }
+
+    void SetAccount(AuthTokens authenticated, string? email)
+    {
+        var pending = email is null ? null : loadAllocation?.Invoke(email);
+        tokens = authenticated;
+        accountEmail = email;
+        allocation = pending;
+    }
+
+    void RecordAllocation(string id)
+    {
+        allocation = id;
+        if (accountEmail is { } email) saveAllocation?.Invoke(email, id);
     }
 
     public string? RefreshToken => tokens?.RefreshToken;
@@ -62,7 +80,7 @@ internal sealed class ConnectionSession(EzConnectClient client) : IDisposable
         bool networkLock = false, bool portable = false, string dnsOverride = "", bool autoMtu = false,
         string[]? bypassIps = null, string[]? bypassDomains = null, bool consoleMode = false, bool bypassLan = false,
         int? keepaliveSeconds = null, string[]? excludedApplications = null, int? tunnelMtu = null,
-        ProxyOverride? socksProxyOverride = null, bool blockOtherApps = false)
+        ProxyOverride? socksProxyOverride = null, bool blockOtherApps = false, string? uplinkAdapterId = null)
     {
         var bypass = new List<string>(blockOtherApps ? [] : bypassIps ?? []);
         using (var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10)))
@@ -150,14 +168,16 @@ internal sealed class ConnectionSession(EzConnectClient client) : IDisposable
                 profile.Validate();
                 Diagnostic?.Invoke("Applied destination IP bypass rules.");
             }
-            await ApplyTunnelOverridesAsync(profile, autoMtu, tunnelMtu, keepaliveSeconds, CancellationToken.None);
-            var owned = await Task.Run(() => StartTunnel(profile, apps, networkLock, portable || consoleMode, allApplications: entirePc));
+            await ApplyTunnelOverridesAsync(profile, autoMtu, tunnelMtu, keepaliveSeconds, CancellationToken.None, uplinkAdapterId);
+            var owned = await Task.Run(() => StartTunnel(profile, apps, networkLock, portable || consoleMode,
+                allApplications: entirePc, uplinkAdapterId: uplinkAdapterId));
             tunnel = owned;
             ActiveMtu = profile.GetInterface("MTU");
             ActiveKeepalive = profile.GetPeer("PersistentKeepalive");
             ActiveRoutingDetails =
             [
                 $"WireSock mode   {(portable || consoleMode ? "Virtual adapter" : "Transparent")}",
+                $"Internet adapter   {owned.UplinkName ?? "Automatic (Windows routing)"}",
                 $"Tunnel addresses   {profile.GetInterface("Address")}",
                 $"Allowed IP ranges   {profile.GetPeer("AllowedIPs")}",
                 $"DNS   {DescribeInterfaceOption(profile, "DNS", "System default")}",
@@ -180,7 +200,7 @@ internal sealed class ConnectionSession(EzConnectClient client) : IDisposable
     public async Task<RouteTestResult> TestAsync(ServiceRoute? route, TunnelProfile? local, CancellationToken cancellation = default,
         bool portable = false, string dnsOverride = "", bool autoMtu = false,
         int? tunnelMtu = null, int? keepaliveSeconds = null, int routeTestSeconds = 20,
-        ProxyOverride? socksProxyOverride = null)
+        ProxyOverride? socksProxyOverride = null, string? uplinkAdapterId = null)
     {
         TunnelProfile profile;
         try { profile = await PrepareAsync(route, local, cancellation: cancellation); }
@@ -194,7 +214,7 @@ internal sealed class ConnectionSession(EzConnectClient client) : IDisposable
         {
             ApplyDnsOverride(profile, dnsOverride);
             ApplyProxyOverride(profile, socksProxyOverride);
-            await ApplyTunnelOverridesAsync(profile, autoMtu, tunnelMtu, keepaliveSeconds, cancellation);
+            await ApplyTunnelOverridesAsync(profile, autoMtu, tunnelMtu, keepaliveSeconds, cancellation, uplinkAdapterId);
             cancellation.ThrowIfCancellationRequested();
             var ranges = profile.GetPeer("AllowedIPs").Split(',', StringSplitOptions.TrimEntries);
             var ipv4Target = System.Net.IPAddress.Parse("1.1.1.1");
@@ -206,12 +226,12 @@ internal sealed class ConnectionSession(EzConnectClient client) : IDisposable
                 ?? throw new DestinationProbeException("Neither standard probe address can be used with this profile. Try Test custom destination.");
             return await Task.Run(async () =>
             {
-                using var probe = StartTunnel(profile, [Environment.ProcessPath!], portable: portable);
+                using var probe = StartTunnel(profile, [Environment.ProcessPath!], portable: portable, uplinkAdapterId: uplinkAdapterId);
                 int probes = 0;
                 bool tcpReached = false;
                 TunnelState? confirmed = null;
                 using var window = CancellationTokenSource.CreateLinkedTokenSource(cancellation);
-                int limitSeconds = Math.Clamp(routeTestSeconds, 5, 120);
+                int limitSeconds = Math.Clamp(routeTestSeconds, 5, 180);
                 long started = System.Diagnostics.Stopwatch.GetTimestamp();
                 double? firstResponseSeconds = null;
                 window.CancelAfter(TimeSpan.FromSeconds(limitSeconds));
@@ -266,7 +286,7 @@ internal sealed class ConnectionSession(EzConnectClient client) : IDisposable
     public async Task<PingReport> ProbeDestinationAsync(ServiceRoute? route, TunnelProfile? local,
         System.Net.IPAddress destination, int tcpPort, bool portable, CancellationToken cancellation = default,
         int timeoutMilliseconds = 1500, bool autoMtu = false, int? tunnelMtu = null,
-        int? keepaliveSeconds = null, ProxyOverride? socksProxyOverride = null)
+        int? keepaliveSeconds = null, ProxyOverride? socksProxyOverride = null, string? uplinkAdapterId = null)
     {
         if (tcpPort is < 1 or > 65535)
             throw new DestinationProbeException("Enter a TCP port between 1 and 65535.");
@@ -295,13 +315,13 @@ internal sealed class ConnectionSession(EzConnectClient client) : IDisposable
             profile.Peer["AllowedIPs"] = $"{destination}/{(ipv6 ? 128 : 32)}";
             profile.Interface.Remove("DNS");
             ApplyProxyOverride(profile, socksProxyOverride);
-            await ApplyTunnelOverridesAsync(profile, autoMtu, tunnelMtu, keepaliveSeconds, cancellation);
+            await ApplyTunnelOverridesAsync(profile, autoMtu, tunnelMtu, keepaliveSeconds, cancellation, uplinkAdapterId);
             cancellation.ThrowIfCancellationRequested();
             return await Task.Run(async () =>
             {
                 string executable = Environment.ProcessPath ??
                     throw new InvalidOperationException("Could not locate the RouteFinder executable for the TCP probe.");
-                using var tunnel = StartTunnel(profile, [executable], portable: portable);
+                using var tunnel = StartTunnel(profile, [executable], portable: portable, uplinkAdapterId: uplinkAdapterId);
                 var before = tunnel.GetState();
                 var tcp = await Diagnostics.MeasureTcp(destination.ToString(), tcpPort, cancellation, timeoutMilliseconds);
                 var report = new PingReport(tcp.Detail, Tcp: tcp);
@@ -394,10 +414,10 @@ internal sealed class ConnectionSession(EzConnectClient client) : IDisposable
     }
 
     static WireSockTunnel StartTunnel(TunnelProfile profile, string[] apps, bool networkLock = false, bool portable = false,
-        bool allApplications = false)
+        bool allApplications = false, string? uplinkAdapterId = null)
     {
         var sdk = new WireSockTunnel(portable: portable, observeEvents: true);
-        try { sdk.Connect(profile, apps, networkLock, allApplications); return sdk; }
+        try { sdk.Connect(profile, apps, networkLock, allApplications, uplinkAdapterId); return sdk; }
         catch { sdk.Dispose(); throw; }
     }
 
@@ -424,12 +444,14 @@ internal sealed class ConnectionSession(EzConnectClient client) : IDisposable
     }
 
     async Task ApplyTunnelOverridesAsync(TunnelProfile profile, bool autoMtu, int? tunnelMtu,
-        int? keepaliveSeconds, CancellationToken cancellation)
+        int? keepaliveSeconds, CancellationToken cancellation, string? uplinkAdapterId)
     {
         if (keepaliveSeconds is int seconds)
             profile.Peer["PersistentKeepalive"] = seconds.ToString(System.Globalization.CultureInfo.InvariantCulture);
         if (tunnelMtu is int mtu)
             profile.Interface["MTU"] = mtu.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        else if (autoMtu && uplinkAdapterId is not null)
+            Diagnostic?.Invoke("Kept the profile MTU because Auto MTU probes run before the selected internet adapter is applied.");
         else
             await ApplyAutoMtuAsync(profile, autoMtu, cancellation);
     }
@@ -470,9 +492,6 @@ internal sealed class ConnectionSession(EzConnectClient client) : IDisposable
             var localProfile = local ?? throw new InvalidOperationException("Select a connection profile.");
             if (entirePc && localProfile.GetInterface("AllowedApps").Length > 0)
                 throw new InvalidOperationException("This imported profile limits routing to specific apps. Use Connect with saved apps or remove AllowedApps from the profile before using Entire PC mode.");
-            if (entirePc && !localProfile.GetPeer("AllowedIPs").Split(',').Any(value =>
-                value.Trim() is "0.0.0.0/0" or "::/0"))
-                throw new InvalidOperationException("Entire PC mode requires an IPv4 or IPv6 default route in this profile.");
             return localProfile;
         }
         var keys = WireGuardKeys.Generate();
@@ -483,10 +502,15 @@ internal sealed class ConnectionSession(EzConnectClient client) : IDisposable
         }
         catch (PendingSessionCleanupException error)
         {
-            allocation = error.SessionId;
+            RecordAllocation(error.SessionId);
             throw;
         }
-        allocation = session.SessionId;
+        try { RecordAllocation(session.SessionId); }
+        catch
+        {
+            await ReleaseAsync();
+            throw;
+        }
         // Provisioning can create a session even if the user has already canceled.
         // Capture the allocation first, then release it before returning cancellation.
         if (cancellation.IsCancellationRequested)
@@ -496,10 +520,16 @@ internal sealed class ConnectionSession(EzConnectClient client) : IDisposable
         }
         if (session.Profile.GetPeer("PersistentKeepalive").Length == 0)
             session.Profile.Peer["PersistentKeepalive"] = "25";
-        if (entirePc)
-            session.Profile.Peer["AllowedIPs"] = route.HasIpv6 ? "0.0.0.0/0,::/0" : "0.0.0.0/0";
-        else if (RemoveUnusableServiceIpv6Routes(session.Profile))
-            Diagnostic?.Invoke("The EZConnect profile supplied only an IPv4 tunnel address. Skipped its IPv6 routes.");
+        try
+        {
+            if (RemoveUnusableServiceIpv6Routes(session.Profile))
+                Diagnostic?.Invoke("The EZConnect profile supplied only an IPv4 tunnel address. Skipped its IPv6 routes.");
+        }
+        catch
+        {
+            await ReleaseAsync();
+            throw;
+        }
         return session.Profile;
     }
 
@@ -510,7 +540,9 @@ internal sealed class ConnectionSession(EzConnectClient client) : IDisposable
         if (profile.GetInterface("Address").Split(',').Any(IsIpv6)) return false;
         var ranges = profile.GetPeer("AllowedIPs").Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
         var ipv4 = ranges.Where(range => !IsIpv6(range)).ToArray();
-        if (ipv4.Length == 0 || ipv4.Length == ranges.Length) return false;
+        if (ipv4.Length == ranges.Length) return false;
+        if (ipv4.Length == 0)
+            throw new FormatException("The EZConnect profile advertises only IPv6 destinations but has no IPv6 tunnel address.");
 
         profile.Peer["AllowedIPs"] = string.Join(",", ipv4);
         return true;
@@ -518,14 +550,21 @@ internal sealed class ConnectionSession(EzConnectClient client) : IDisposable
 
     public async Task DisconnectAsync()
     {
+        Exception? localFailure = null;
         if (tunnel is { } owned)
         {
             tunnel = null;
             ActiveMtu = ActiveKeepalive = null;
             ActiveRoutingDetails = [];
-            await Task.Run(owned.Dispose);
+            try { await Task.Run(owned.Dispose); }
+            catch (Exception error) { localFailure = error; }
         }
-        await ReleaseAsync();
+        try { await ReleaseAsync(); }
+        catch (Exception error) when (localFailure is not null)
+        {
+            throw new AggregateException("Local tunnel cleanup and EZConnect session release failed.", localFailure, error);
+        }
+        if (localFailure is not null) System.Runtime.ExceptionServices.ExceptionDispatchInfo.Throw(localFailure);
     }
 
     async Task ReleaseAsync()
@@ -543,11 +582,12 @@ internal sealed class ConnectionSession(EzConnectClient client) : IDisposable
                 await Task.Delay(delay);
                 await ReleaseRequest();
             }
+            if (accountEmail is { } email) saveAllocation?.Invoke(email, null);
             allocation = null;
         }
         catch (Exception error)
         {
-            throw new InvalidOperationException("The local tunnel is closed, but EZConnect did not confirm session release. Use Retry cleanup before starting another route.", error);
+            throw new InvalidOperationException("EZConnect did not confirm session release. Use Retry cleanup before starting another route.", error);
         }
     }
 

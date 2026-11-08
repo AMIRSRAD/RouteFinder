@@ -19,7 +19,7 @@ public sealed partial class MainWindow : Window
     sealed record RouteChoice(string Key, string Title, string Source, string Detail,
         SavedProfile? Profile = null, ServiceRoute? Service = null);
 
-    readonly ConnectionSession session = new(new EzConnectClient());
+    readonly ConnectionSession session = new(new EzConnectClient(), ProfileStore.LoadAllocation, ProfileStore.SaveAllocation);
     readonly ObservableCollection<string> activity = [];
     readonly DispatcherTimer timer = new();
     readonly List<SavedProfile> profiles = [];
@@ -60,7 +60,7 @@ public sealed partial class MainWindow : Window
             AppWindow.TitleBar.ButtonInactiveForegroundColor = Microsoft.UI.Colors.LightGray;
         }
         AppWindow.Closing += OnClosing;
-        Closed += (_, _) => { closing = true; timer.Stop(); tray?.Dispose(); trayMenu?.Dispose(); applicationIcon?.Dispose(); session.Dispose(); };
+        Closed += (_, _) => { closing = true; timer.Stop(); directRouting?.Dispose(); tray?.Dispose(); trayMenu?.Dispose(); applicationIcon?.Dispose(); session.Dispose(); };
         session.Diagnostic += message => DispatcherQueue.TryEnqueue(() => AddActivity(message));
         session.RefreshTokenChanged += token =>
         {
@@ -107,6 +107,8 @@ public sealed partial class MainWindow : Window
             }
             checkedApps.UnionWith(apps.Except(preferences.UncheckedApplications ?? [], StringComparer.OrdinalIgnoreCase));
             route = Routes().FirstOrDefault(item => item.Key == preferences.LastConnectedRoute) ?? Routes().FirstOrDefault();
+            if (Scope.SelectedIndex != 1 && route?.Profile is { Applications.Count: > 0 } savedProfile)
+                ApplyProfileAppSelection(savedProfile.Applications);
         }
         catch (Exception error) { Report(error.Message); }
         InitializeRouteBrowser();
@@ -139,6 +141,12 @@ public sealed partial class MainWindow : Window
         Grid.SetColumnSpan(HeaderActions, stacked ? 2 : 1);
         Grid.SetRow(HeaderActions, stacked ? 1 : 0);
         HeaderActions.HorizontalAlignment = stacked ? HorizontalAlignment.Left : HorizontalAlignment.Right;
+        bool compactHeader = args.NewSize.Width < 460;
+        Grid.SetRow(SettingsButton, compactHeader ? 1 : 0);
+        Grid.SetRow(AdvancedButton, compactHeader ? 1 : 0);
+        Grid.SetColumn(SettingsButton, compactHeader ? 0 : 2);
+        Grid.SetColumn(AdvancedButton, compactHeader ? 1 : 3);
+        WindowsRoutingTools.Orientation = args.NewSize.Width < 360 ? Orientation.Vertical : Orientation.Horizontal;
     }
 
     void ScopeChanged(object sender, SelectionChangedEventArgs args)
@@ -170,8 +178,11 @@ public sealed partial class MainWindow : Window
         write();
     }
 
+    Microsoft.UI.Dispatching.DispatcherQueueTimer? appSelectionSave;
+
     void SavePreferences()
     {
+        appSelectionSave?.Stop();
         if (preview) return;
         try { WriteStore("preferences", () => ProfileStore.SavePreferences(preferences)); }
         catch (Exception error) { Report($"Could not save preferences. {error.Message}"); }
@@ -191,8 +202,8 @@ public sealed partial class MainWindow : Window
             };
             AutomationProperties.SetName(check, name);
             ToolTipService.SetToolTip(check, path);
-            check.Checked += (_, _) => { checkedApps.Add(path); SaveAppSelection(); Refresh(); };
-            check.Unchecked += (_, _) => { checkedApps.Remove(path); SaveAppSelection(); Refresh(); };
+            check.Checked += (_, _) => { checkedApps.Add(path); SaveAppSelection(defer: true); Refresh(refreshRouteBrowser: false); };
+            check.Unchecked += (_, _) => { checkedApps.Remove(path); SaveAppSelection(defer: true); Refresh(refreshRouteBrowser: false); };
             var fallback = new FontIcon { Glyph = "\uE7C3", FontSize = 16 };
             var icon = new Grid { Width = 18, Height = 18, Margin = new Thickness(10, 0, 8, 0) };
             icon.Children.Add(fallback);
@@ -260,15 +271,33 @@ public sealed partial class MainWindow : Window
         catch (Exception error) { Report(error.Message); }
     }
 
-    void SaveAppSelection()
+    void SaveAppSelection(bool defer = false)
     {
         preferences = preferences with { UncheckedApplications = apps.Where(path => !checkedApps.Contains(path)).ToArray() };
-        SavePreferences();
+        if (!defer) { SavePreferences(); return; }
+        if (preview) return;
+        if (appSelectionSave is null)
+        {
+            appSelectionSave = DispatcherQueue.CreateTimer();
+            appSelectionSave.Interval = TimeSpan.FromMilliseconds(200);
+            appSelectionSave.IsRepeating = false;
+            appSelectionSave.Tick += (_, _) => SavePreferences();
+        }
+        appSelectionSave.Stop();
+        appSelectionSave.Start();
     }
 
-    void Refresh()
+    void Refresh(bool refreshRouteBrowser = true)
     {
         bool editable = !busy && !Connected && !session.NeedsCleanup;
+        bool vpnEditable = editable && directRouting is null;
+        WindowsRoutingButton.Content = windowsRoutingOpen ? "Back to VPN routes"
+            : !AppRouterActive ? "Windows routing" : "Windows routing · On";
+        WindowsRoutingButton.IsEnabled = !preview && (editable || !busy && AppRouterActive);
+        WindowsRoutingPanel.Visibility = windowsRoutingOpen ? Visibility.Visible : Visibility.Collapsed;
+        Cards.Visibility = ConnectionBar.Visibility = windowsRoutingOpen ? Visibility.Collapsed : Visibility.Visible;
+        if (SyncWindowsAppSuggestions() && windowsRoutingOpen) RenderWindowsAppRules();
+        else UpdateWindowsRoutingActions();
         bool entirePc = Scope.SelectedIndex == 1;
         if (armed is { } watch && (entirePc || watch.RouteKey != route?.Key || !watch.Paths.SetEquals(checkedApps)))
             CancelWatch();
@@ -280,10 +309,10 @@ public sealed partial class MainWindow : Window
             ? Visibility.Visible : Visibility.Collapsed;
         PresetsButton.IsEnabled = editable;
         AddAppsButton.IsEnabled = editable && !entirePc && !preview;
-        AddRouteButton.IsEnabled = editable && !preview;
-        SetActionLabel(AccountButton, session.SignedIn ? "EZConnect account" : "Sign in to EZConnect");
-        AccountButton.IsEnabled = editable;
-        AccountCommand.Text = session.SignedIn ? "Manage EZConnect account…" : "Add EZConnect account…";
+        AddRouteButton.IsEnabled = editable;
+        ImportRouteCommand.IsEnabled = !preview;
+        AccountCommand.Text = UiLanguage.Text(session.SignedIn ? "Manage EZConnect account…" : "Sign in to EZConnect…");
+        CatalogCommand.Visibility = accountCatalog is { Games.Count: > 0 } ? Visibility.Visible : Visibility.Collapsed;
         AdvancedButton.IsEnabled = editable;
         SettingsButton.IsEnabled = editable;
         ConnectionActionsButton.IsEnabled = !busy;
@@ -291,19 +320,24 @@ public sealed partial class MainWindow : Window
             ? "Add a running app or browse for its executable." : $"{checkedApps.Count} of {apps.Count} apps selected";
         if (!entirePc && selectedGame is { } game) AppSummary.Text += $" · Catalog: {game.Name}";
         if (BlocksOtherApps) AppSummary.Text += " · " + UiLanguage.Text("Other apps lose network access while connected.");
-        RefreshRouteBrowser();
+        if (refreshRouteBrowser) RefreshRouteBrowser();
+        InternetAdapterRow.Visibility = route is null ? Visibility.Collapsed : Visibility.Visible;
+        InternetAdapterButton.IsEnabled = editable && route is not null && !preview;
+        InternetAdapterLabel.Text = UplinkLabel(route is { } selected ? UplinkFor(selected) : null);
+        AutomationProperties.SetName(InternetAdapterButton, $"{UiLanguage.Text("Internet adapter")} · {InternetAdapterLabel.Text}");
         RefreshConnectionActions();
         SetActionLabel(TestRouteButton, activeTest is null ? "Test route" : "Cancel test", activeTest is null ? "\uE9D9" : "\uE711");
-        TestAllButton.IsEnabled = editable && Routes().Any();
-        TestRouteButton.IsEnabled = activeTest is { IsCancellationRequested: false } || editable && route is not null;
-        CompareButton.IsEnabled = editable && Routes().Skip(1).Any();
-        DestinationButton.IsEnabled = editable && Routes().Any(choice => choice.Service?.IsDownload != true);
+        TestAllButton.IsEnabled = vpnEditable && Routes().Any();
+        TestRouteButton.IsEnabled = activeTest is { IsCancellationRequested: false } || vpnEditable && route is not null;
+        CompareButton.IsEnabled = vpnEditable && Routes().Skip(1).Any();
+        DestinationButton.IsEnabled = vpnEditable && Routes().Any(choice => choice.Service?.IsDownload != true);
         RouteOptionsButton.IsEnabled = editable && route is not null;
-        TestShortlistButton.IsEnabled = editable && RouteList.Items.Count > 0;
+        TestShortlistButton.IsEnabled = vpnEditable && RouteList.Items.Count > 0;
         RouteToolsButton.IsEnabled = CompareButton.IsEnabled || DestinationButton.IsEnabled || RouteOptionsButton.IsEnabled || TestShortlistButton.IsEnabled;
         SetActionLabel(ConnectButton, Connected ? "Disconnect" : session.NeedsCleanup ? "Retry cleanup" : "Connect",
             Connected ? "\uE71A" : session.NeedsCleanup ? "\uE72C" : "\uE7E8");
-        ConnectButton.IsEnabled = !busy && (Connected || session.NeedsCleanup || route is not null && (entirePc || checkedApps.Count > 0));
+        ConnectButton.IsEnabled = !busy && !AppRouterActive &&
+            (Connected || session.NeedsCleanup || route is not null && (entirePc || checkedApps.Count > 0));
         if (WindowCanRenderTelemetry) UpdateStatus();
         UpdatePolling();
         UpdateTray();
@@ -330,7 +364,7 @@ public sealed partial class MainWindow : Window
             trafficRate = null;
             ConnectionTitle.Text = UiLanguage.Text(session.NeedsCleanup ? "Cleanup needed" : "Disconnected");
             ConnectionDetail.Text = session.NeedsCleanup ? "Retry cleanup to release the allocated session."
-                : route is null ? "Add a route to get started."
+                : route is null ? UiLanguage.Text("Add a route to get started.")
                 : Scope.SelectedIndex != 1 && checkedApps.Count == 0 ? "Select at least one app to connect."
                 : armed is { } watch ? $"Watching {watch.Paths.Count} app(s) for launch."
                 : UiLanguage.Text("Ready to connect.");
@@ -407,6 +441,11 @@ public sealed partial class MainWindow : Window
     async Task ChangeConnection(bool automatic = false, bool console = false)
     {
         if (busy || exitRequested || closing) return;
+        if (AppRouterActive)
+        {
+            if (!automatic) Report("Stop Windows routing before starting a VPN tunnel.", InfoBarSeverity.Informational);
+            return;
+        }
         if (!automatic) CancelWatch();
         if (preview)
         {
@@ -457,7 +496,8 @@ public sealed partial class MainWindow : Window
                 domains.Concat(gameDomains).Distinct(StringComparer.OrdinalIgnoreCase).ToArray(), consoleMode: console,
                 bypassLan: preferences.BypassLan,
                 keepaliveSeconds: preferences.KeepaliveSeconds, excludedApplications: preferences.ExcludedApplications,
-                tunnelMtu: preferences.TunnelMtu, socksProxyOverride: ConfiguredProxy, blockOtherApps: !console && BlocksOtherApps);
+                tunnelMtu: preferences.TunnelMtu, socksProxyOverride: ConfiguredProxy, blockOtherApps: !console && BlocksOtherApps,
+                uplinkAdapterId: UplinkFor(selected));
             connectedAt = DateTimeOffset.UtcNow;
             reconnectFailed = false;
             ResetTrafficHealth();
@@ -525,14 +565,30 @@ public sealed partial class MainWindow : Window
             return;
         }
         if (session.HasTunnel || session.NeedsCleanup)
-            await Run("Disconnecting…", () => session.DisconnectAsync());
+        {
+            bool disconnected = false;
+            await Run("Disconnecting…", async () =>
+            {
+                await session.DisconnectAsync();
+                disconnected = true;
+            });
+            if (!disconnected) return;
+        }
         if (session.HasTunnel || session.NeedsCleanup) return;
+        if (appSelectionSave?.IsRunning == true) SavePreferences();
+        if (directRouting is { } routing)
+        {
+            try { routing.Dispose(); }
+            catch (Exception error) { Report(error.Message); return; }
+            directRouting = null;
+        }
         closing = true;
         Close();
     }
 
     void Report(string message, InfoBarSeverity severity = InfoBarSeverity.Warning)
     {
+        Notice.ActionButton = null;
         Notice.Severity = severity;
         Notice.Message = message;
         Notice.IsOpen = true;

@@ -104,6 +104,11 @@ public sealed partial class MainWindow
 
     async Task RunDestinationTests(IPAddress address, DestinationOptions options, RouteChoice[] chosen)
     {
+        if (chosen.Length > 0 && directRouting is not null)
+        {
+            Report("Stop Windows routing before running VPN route tests.", InfoBarSeverity.Informational);
+            return;
+        }
         if (busy || Connected || session.NeedsCleanup || (chosen.Length > 0 && (options.Port is null || !preview && !EnsureAdministrator()))) return;
         using var cancellation = new CancellationTokenSource();
         var token = cancellation.Token;
@@ -173,7 +178,7 @@ public sealed partial class MainWindow
     {
         var profile = choice.Profile is { } saved ? TunnelProfile.Parse(saved.Configuration, saved.Name) : null;
         Task<PingReport> Probe() => session.ProbeDestinationAsync(choice.Service, profile, address, port, preferences.PortableEngine, token, timeout,
-            preferences.AutoMtu, preferences.TunnelMtu, preferences.KeepaliveSeconds, ConfiguredProxy);
+            preferences.AutoMtu, preferences.TunnelMtu, preferences.KeepaliveSeconds, ConfiguredProxy, UplinkFor(choice));
         return await RunPacedProbe(choice, Probe, token);
     }
 }

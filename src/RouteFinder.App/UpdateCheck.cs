@@ -10,10 +10,12 @@ internal static class UpdateCheck
     static string UserFeedPath => Path.Combine(ProfileStore.DirectoryPath, "update-feed.txt");
     static string LegacyFeedPath => Path.Combine(AppContext.BaseDirectory, "update-feed.txt");
 
-    public static string ReadFeed()
+    internal const string OfficialFeed = "https://github.com/AMIRSRAD/RouteFinder/releases/latest/download/manifest.json";
+
+    public static string ReadFeed(bool useGitHubDefault = false)
     {
         if (File.Exists(UserFeedPath)) return File.ReadAllText(UserFeedPath).Trim();
-        return File.Exists(LegacyFeedPath) ? File.ReadAllText(LegacyFeedPath).Trim() : "";
+        return File.Exists(LegacyFeedPath) ? File.ReadAllText(LegacyFeedPath).Trim() : useGitHubDefault ? OfficialFeed : "";
     }
 
     public static void SaveFeed(string endpoint)
@@ -34,10 +36,18 @@ internal static class UpdateCheck
 
     internal sealed record Result(string Message, bool Available, Uri? ReleasePage, Package? Download);
     internal sealed record Package(Uri Uri, string Sha256);
+    static bool IsGitHubReleaseAsset(Uri uri, bool latest = false) =>
+        uri.Scheme == Uri.UriSchemeHttps && uri.IsDefaultPort && uri.UserInfo.Length == 0 &&
+        uri.Host.Equals("github.com", StringComparison.OrdinalIgnoreCase) &&
+        uri.AbsolutePath.StartsWith(latest ? "/AMIRSRAD/RouteFinder/releases/latest/download/" :
+            "/AMIRSRAD/RouteFinder/releases/download/", StringComparison.OrdinalIgnoreCase);
 
-    public static async Task<Result?> CheckAsync()
+    public static bool IsOfficialInstaller(Package package) => IsGitHubReleaseAsset(package.Uri) &&
+        package.Uri.AbsolutePath.EndsWith("/RouteFinderSetup.exe", StringComparison.Ordinal);
+
+    public static async Task<Result?> CheckAsync(bool useGitHubDefault = false)
     {
-        string endpoint = ReadFeed();
+        string endpoint = ReadFeed(useGitHubDefault);
         if (endpoint.Length == 0) return null;
         var uri = ValidateFeed(endpoint);
 
@@ -46,7 +56,10 @@ internal static class UpdateCheck
             Timeout = TimeSpan.FromSeconds(10),
             MaxResponseContentBufferSize = 65536
         };
-        using var manifest = JsonDocument.Parse(await client.GetStringAsync(uri));
+        using var feedDeadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        using var feed = await OpenReleaseResponse(client, uri, HttpCompletionOption.ResponseContentRead, feedDeadline.Token);
+        feed.EnsureSuccessStatusCode();
+        using var manifest = JsonDocument.Parse(await feed.Content.ReadAsStringAsync(feedDeadline.Token));
         var root = manifest.RootElement;
         if (root.ValueKind != JsonValueKind.Object ||
             !root.TryGetProperty("product", out var product) || product.ValueKind != JsonValueKind.String ||
@@ -78,7 +91,7 @@ internal static class UpdateCheck
         const long maxBytes = 512L * 1024 * 1024;
         using var deadline = new CancellationTokenSource(TimeSpan.FromMinutes(5));
         using var client = new HttpClient(new HttpClientHandler { AllowAutoRedirect = false });
-        using var response = await client.GetAsync(package.Uri, HttpCompletionOption.ResponseHeadersRead, deadline.Token);
+        using var response = await OpenReleaseResponse(client, package.Uri, HttpCompletionOption.ResponseHeadersRead, deadline.Token);
         response.EnsureSuccessStatusCode();
         if (response.Content.Headers.ContentLength > maxBytes) throw new IOException("The update exceeds the download size limit.");
 
@@ -105,5 +118,34 @@ internal static class UpdateCheck
             File.Move(temporary, destination, overwrite: true);
         }
         finally { if (File.Exists(temporary)) File.Delete(temporary); }
+
     }
+
+    static async Task<HttpResponseMessage> OpenReleaseResponse(HttpClient client, Uri uri,
+        HttpCompletionOption completion, CancellationToken cancellation)
+    {
+        var initial = await client.GetAsync(uri, completion, cancellation);
+        if (IsGitHubReleaseAsset(uri, latest: true) && IsRedirect(initial))
+        {
+            var location = initial.Headers.Location;
+            initial.Dispose();
+            if (location is null || !IsGitHubReleaseAsset(new Uri(uri, location)))
+                throw new IOException("GitHub returned an unexpected release location.");
+            uri = new Uri(uri, location);
+            initial = await client.GetAsync(uri, completion, cancellation);
+        }
+        if (!IsGitHubReleaseAsset(uri) || !IsRedirect(initial))
+            return initial;
+        using (initial)
+        {
+            var target = initial.Headers.Location;
+            if (target is not { IsAbsoluteUri: true, IsDefaultPort: true } ||
+                target.Scheme != Uri.UriSchemeHttps || target.UserInfo.Length != 0 ||
+                target.Host is not ("release-assets.githubusercontent.com" or "objects.githubusercontent.com"))
+                throw new IOException("GitHub returned an unexpected update download location.");
+            return await client.GetAsync(target, completion, cancellation);
+        }
+    }
+
+    static bool IsRedirect(HttpResponseMessage response) => (int)response.StatusCode is 301 or 302 or 303 or 307 or 308;
 }

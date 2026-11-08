@@ -36,7 +36,7 @@ public sealed partial class App : Application
         try
         {
             using var identity = WindowsIdentity.GetCurrent();
-            string name = $@"Local\RouteFinder.WinUI.{identity.User?.Value ?? "Default"}";
+            string name = LaunchInstance.SharedName;
             if (LaunchInstance.TryActivate(name)) return false;
             if (!new WindowsPrincipal(identity).IsInRole(WindowsBuiltInRole.Administrator))
             {

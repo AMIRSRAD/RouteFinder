@@ -12,6 +12,38 @@ internal static class SelfTest
         void Check(string name, Action action) { try { action(); results.Add(new { name, passed = true, error = (string?)null }); } catch (Exception e) { failed = true; results.Add(new { name, passed = false, error = e.Message }); } }
         Check("Windows account encryption roundtrip", () => { var plain = Encoding.UTF8.GetBytes("RouteFinder test data"); var encrypted = ProfileStore.Protect(plain, true); if (encrypted.SequenceEqual(plain) || !ProfileStore.Protect(encrypted, false).SequenceEqual(plain)) throw new Exception("Encryption mismatch"); });
         Check("Installed WireSock exports resolve without creating a tunnel", () => { using var sdk = new WireSockTunnel(); if (sdk.IsActive) throw new Exception("Unexpected active handle"); });
+        Check("Classic preserves checked and unchecked executables", () =>
+        {
+            var directory = Directory.CreateTempSubdirectory("RouteFinder-classic-check-");
+            ProfileStore.VerificationDirectory = directory.FullName;
+            try
+            {
+                const string selected = @"C:\Games\selected.exe";
+                const string uncheckedApp = @"C:\Games\unchecked.exe";
+                ProfileStore.SaveApplications([selected, uncheckedApp]);
+                ProfileStore.SavePreferences(new(false, [], UncheckedApplications: [uncheckedApp]));
+                using var form = new MainForm();
+                _ = form.Handle;
+                try
+                {
+                    var list = Descendants(form).OfType<CheckedListBox>().Single();
+                    if (list.Items.Count != 2 || !list.CheckedItems.Cast<string>().SequenceEqual([selected]))
+                        throw new Exception("Classic did not restore the checked state.");
+                    list.SetItemChecked(0, false);
+                    Application.DoEvents();
+                    if (!(ProfileStore.LoadApplications() ?? []).SequenceEqual([selected, uncheckedApp]) ||
+                        !(ProfileStore.LoadPreferences().UncheckedApplications ?? []).SequenceEqual([selected, uncheckedApp]))
+                        throw new Exception("Saving checkbox state lost an executable or its selection.");
+                }
+                finally { form.Close(); }
+            }
+            finally
+            {
+                ProfileStore.VerificationDirectory = null;
+                foreach (var file in directory.EnumerateFiles()) file.Delete();
+                directory.Delete();
+            }
+        });
         Check("Main window renders without networking", () =>
         {
             using var form = new MainForm(preview: true);

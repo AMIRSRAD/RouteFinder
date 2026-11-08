@@ -23,7 +23,7 @@ public sealed partial class MainWindow
                 Root.Loaded += (_, _) => loaded.TrySetResult();
                 await loaded.Task;
             }
-            if (!ConnectButton.IsEnabled || !AccountButton.IsEnabled || !AdvancedButton.IsEnabled ||
+            if (!ConnectButton.IsEnabled || !AddRouteButton.IsEnabled || ImportRouteCommand.IsEnabled || !AdvancedButton.IsEnabled ||
                 (RouteList.SelectedItem as RoutePickerRow)?.Key != "local:Amsterdam · Home relay" || checkedApps.Count != 2)
                 throw new InvalidOperationException("The preview did not render its sample route and app selection.");
             if (!TestRouteButton.IsEnabled || !CompareButton.IsEnabled || !SettingsButton.IsEnabled || !RouteOptionsButton.IsEnabled ||
@@ -53,6 +53,7 @@ public sealed partial class MainWindow
                 throw new InvalidOperationException("The preview did not display the simulated test result and retain the favorite.");
             RouteRegion.SelectedItem = "TR";
             RouteSearch.Text = "Istanbul";
+            await Task.Delay(250);
             if (RouteList.Items.Count != 1 || (RouteList.Items[0] as RoutePickerRow)?.Key != "TR:2")
                 throw new InvalidOperationException("Search and region filters did not combine correctly.");
             if (FilteredRouteChoices().Single().Key != "TR:2" ||

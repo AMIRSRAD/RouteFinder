@@ -14,6 +14,7 @@ public sealed partial class MainWindow
     string? rememberedEmail;
     BootstrapData? accountCatalog;
     DateTimeOffset? accountLoadedAt;
+    bool restoringAccount;
 
     async void RestoreAccountOnLoad(object sender, RoutedEventArgs args)
     {
@@ -25,7 +26,7 @@ public sealed partial class MainWindow
 
     async Task RestoreRememberedSignIn(bool interactive = false)
     {
-        if (busy) return;
+        if (busy || restoringAccount) return;
         if (session.SignedIn)
         {
             if (interactive) Report("Your EZConnect account is already signed in.", InfoBarSeverity.Informational);
@@ -40,7 +41,9 @@ public sealed partial class MainWindow
             return;
         }
 
-        await Run("Restoring EZConnect sign-in…", async () =>
+        restoringAccount = true;
+        var previousRoute = route?.Key;
+        try
         {
             bool refreshed = false;
             try
@@ -49,19 +52,26 @@ public sealed partial class MainWindow
                 {
                     refreshed = true;
                     SaveLogin(saved.Email, token);
-                });
+                }, saved.Email);
                 signedInEmail = rememberedEmail = saved.Email;
-                ApplyCatalog(catalog, restoreLastRoute: true);
+                ApplyCatalog(catalog, restoreLastRoute: !busy && !Connected && route?.Key == previousRoute,
+                    preserveSelection: busy || Connected);
             }
             catch (EzConnectServiceException error) when (!refreshed && error.StatusCode is 401 or 403)
             {
                 ClearLogin();
                 Report("Your saved EZConnect sign-in has expired. Sign in again to load your routes.");
             }
-        });
+        }
+        catch (Exception error) { if (!closing) Report(error.Message); }
+        finally
+        {
+            restoringAccount = false;
+            if (!closing) Refresh();
+        }
     }
 
-    void ApplyCatalog(BootstrapData catalog, bool restoreLastRoute = false)
+    void ApplyCatalog(BootstrapData catalog, bool restoreLastRoute = false, bool preserveSelection = false)
     {
         accountCatalog = catalog;
         accountLoadedAt = DateTimeOffset.UtcNow;
@@ -71,7 +81,12 @@ public sealed partial class MainWindow
         serviceRoutes.Clear();
         serviceRoutes.AddRange(catalog.Routes.DistinctBy(item => (item.RegionCode, item.Name))
             .SelectMany(item => item.HasIpv6 ? new[] { item, item with { OverIpv6 = true } } : [item]));
-        route = Routes().FirstOrDefault(item => item.Key == previous) ?? Routes().FirstOrDefault();
+        if (!preserveSelection)
+        {
+            var selected = Routes().FirstOrDefault(item => item.Key == previous) ?? Routes().FirstOrDefault();
+            if (route?.Key == selected?.Key) route = selected;
+            else SelectRoute(selected);
+        }
         AddActivity($"Loaded {serviceRoutes.Count} EZConnect routes.");
     }
 
@@ -89,6 +104,11 @@ public sealed partial class MainWindow
 
     async void ToggleAccount(object sender, RoutedEventArgs args)
     {
+        if (restoringAccount)
+        {
+            Report("Restoring your EZConnect sign-in…", InfoBarSeverity.Informational);
+            return;
+        }
         if (preview)
         {
             var demo = MakeDialog("EZConnect sign-in", new TextBlock

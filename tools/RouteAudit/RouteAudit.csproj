@@ -8,5 +8,7 @@
   <ItemGroup>
     <ProjectReference Include="../../src/RouteFinder.Service/RouteFinder.Service.csproj" />
     <Compile Include="../../src/RouteFinder.App/ConnectionSession.cs" Link="ConnectionSession.cs" />
+    <Compile Include="../../src/RouteFinder.App/Diagnostics.cs" Link="Diagnostics.cs" />
+    <Compile Include="../../src/RouteFinder.App/PathMtuProbe.cs" Link="PathMtuProbe.cs" />
   </ItemGroup>
 </Project>

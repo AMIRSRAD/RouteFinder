@@ -24,8 +24,14 @@ public sealed partial class MainWindow
         }
         try
         {
-            if (!closing && await UpdateCheck.CheckAsync() is { Available: true } update && !closing)
-                AddActivity(update.Message);
+            if (!closing && await UpdateCheck.CheckAsync(useGitHubDefault: true) is { Available: true } update && !closing)
+            {
+                if (Notice.IsOpen || busy) { AddActivity(update.Message); return; }
+                Report(update.Message, InfoBarSeverity.Informational);
+                var review = new Button { Content = "Review update" };
+                review.Click += async (_, _) => { if (!busy && !closing) await ShowUpdate(update); };
+                Notice.ActionButton = review;
+            }
         }
         catch (Exception error)
         {
@@ -213,7 +219,7 @@ public sealed partial class MainWindow
 
     async Task ConfigureUpdateFeed()
     {
-        var input = new TextBox { Header = "HTTPS release manifest URL", Text = UpdateCheck.ReadFeed(), MinWidth = 300 };
+        var input = new TextBox { Header = "HTTPS release manifest URL (blank disables updates)", Text = UpdateCheck.ReadFeed(true), MinWidth = 300 };
         var error = new TextBlock { TextWrapping = TextWrapping.Wrap };
         var panel = new StackPanel { Spacing = 8 };
         panel.Children.Add(input);
@@ -229,17 +235,59 @@ public sealed partial class MainWindow
 
     async Task CheckForUpdates()
     {
-        if (UpdateCheck.ReadFeed().Length == 0) { await ConfigureUpdateFeed(); return; }
+        if (UpdateCheck.ReadFeed(true).Length == 0) { await ConfigureUpdateFeed(); return; }
         UpdateCheck.Result? result = null;
-        await Run("Checking for updates…", async () => result = await UpdateCheck.CheckAsync());
+        await Run("Checking for updates…", async () => result = await UpdateCheck.CheckAsync(useGitHubDefault: true));
         if (result is null) return;
+        await ShowUpdate(result);
+    }
+
+    async Task ShowUpdate(UpdateCheck.Result result)
+    {
         var content = new StackPanel { Spacing = 8 };
         content.Children.Add(new TextBlock { Text = result.Message, TextWrapping = TextWrapping.Wrap });
         if (result.Available && result.ReleasePage is { } page)
             content.Children.Add(new HyperlinkButton { Content = "Open release page", NavigateUri = page });
         var package = result.Available ? result.Download : null;
-        var dialog = MakeDialog("RouteFinder updates", content, package is null ? "" : "Save update");
+        bool install = package is not null && UpdateCheck.ReadFeed(true) == UpdateCheck.OfficialFeed &&
+            UpdateCheck.IsOfficialInstaller(package);
+        if (install)
+            content.Children.Add(new TextBlock { Text = "RouteFinder will close and open the verified GitHub installer.",
+                TextWrapping = TextWrapping.Wrap });
+        var dialog = MakeDialog("RouteFinder updates", content, package is null ? "" : install ? "Download and install" : "Save update");
         if (await dialog.ShowAsync() != ContentDialogResult.Primary || package is null) return;
+        if (install)
+        {
+            if (busy || AppRouterActive || session.HasTunnel || session.NeedsCleanup)
+            {
+                Report("Stop routing and finish pending connection cleanup before installing the update.");
+                return;
+            }
+            string? verified = null;
+            await Run("Downloading update…", async () =>
+            {
+                string folder = Path.Combine(ProfileStore.DirectoryPath, "updates", Guid.NewGuid().ToString("N"));
+                Directory.CreateDirectory(folder);
+                string path = Path.Combine(folder, "RouteFinderSetup.exe");
+                await UpdateCheck.DownloadAsync(package, path);
+                verified = path;
+            });
+            if (verified is null || closing || exitRequested) return;
+            try
+            {
+                using var installerFile = File.Open(verified, FileMode.Open, FileAccess.Read, FileShare.Read);
+                string hash = Convert.ToHexString(await System.Security.Cryptography.SHA256.HashDataAsync(installerFile));
+                if (!hash.Equals(package.Sha256, StringComparison.OrdinalIgnoreCase))
+                    throw new IOException("The downloaded installer changed after verification.");
+                if (busy || closing || AppRouterActive || session.HasTunnel || session.NeedsCleanup) return;
+                var start = new ProcessStartInfo(verified) { UseShellExecute = false };
+                start.ArgumentList.Add($"/UPDATEPID={Environment.ProcessId}");
+                using var installer = Process.Start(start) ?? throw new InvalidOperationException("Could not open the update installer.");
+                await RequestExit();
+            }
+            catch (Exception error) { Report(error.Message); }
+            return;
+        }
         var picker = new FileSavePicker(AppWindow.Id) { SuggestedFileName = "RouteFinder-update" };
         picker.FileTypeChoices.Add("Windows executable", [".exe"]);
         if (await picker.PickSaveFileAsync() is not { } file) return;
