@@ -16,7 +16,7 @@ public sealed partial class MainWindow
         try
         {
             if (await WindowsNetworkTools.QueryNetworkLockAsync() == true && !closing && !session.HasTunnel)
-                AddActivity("WireSock reports an active driver network lock. If no other client is connected, review it under Advanced tools.");
+                AddActivity("WireSock reports an active driver network lock. If no other client is connected, review it under Settings > Maintenance.");
         }
         catch (Exception error)
         {
@@ -39,28 +39,22 @@ public sealed partial class MainWindow
         }
     }
 
-    async void OpenAdvancedTools(object sender, RoutedEventArgs args)
+    (string Glyph, string Label, string Description, Func<Task> Run)[] MaintenanceActions() =>
+    [
+        ("\uE895", "Check for updates", "Download and install the latest RouteFinder release.", CheckForUpdates),
+        ("\uE774", "Update feed", "Choose where RouteFinder looks for releases.", ConfigureUpdateFeed),
+        ("\uE90F", "WireSock setup and repair", "Repair the installed WireSock SDK or drivers.", OpenWireSockRepair),
+        ("\uE72E", "Driver network lock recovery", "Reset a kill switch left on by another WireSock client.", ResetDriverLock)
+    ];
+
+    async void ConfigureIpv6Clicked(object sender, RoutedEventArgs args) => await RunMaintenance(ConfigureIpv6);
+    async void ClearTestsClicked(object sender, RoutedEventArgs args) => await RunMaintenance(ClearSavedTests);
+
+    async Task RunMaintenance(Func<Task> action)
     {
-        var actions = new (string Label, Func<Task> Run)[]
-        {
-            ("WireSock setup and repair", OpenWireSockRepair),
-            ("Driver network lock recovery", ResetDriverLock),
-            ("Windows IPv6 adapter bindings", ConfigureIpv6),
-            ("Mobile hotspot and console setup", OpenHotspot),
-            ("Retry remembered EZConnect sign-in", RetryRememberedSignIn),
-            ("Check for RouteFinder updates", CheckForUpdates),
-            ("Configure update feed", ConfigureUpdateFeed),
-            ("Window and language preferences", OpenAppearance),
-            ("Clear all saved route tests", ClearSavedTests)
-        };
-        var list = new ListView { SelectionMode = ListViewSelectionMode.Single, MinWidth = 320, MaxHeight = 420 };
-        foreach (var action in actions) list.Items.Add(action.Label);
-        list.SelectedIndex = 0;
-        var dialog = MakeDialog("Advanced tools", list, "Open");
-        list.SelectionChanged += (_, _) => dialog.IsPrimaryButtonEnabled = list.SelectedIndex >= 0;
-        if (await dialog.ShowAsync() != ContentDialogResult.Primary || list.SelectedIndex < 0) return;
+        if (busy) return;
         if (preview) { Report("Open RouteFinder outside preview mode to use system and account tools."); return; }
-        try { await actions[list.SelectedIndex].Run(); }
+        try { await action(); }
         catch (Exception error) { Report(error.Message); }
     }
 

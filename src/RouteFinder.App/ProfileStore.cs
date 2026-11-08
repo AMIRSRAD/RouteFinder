@@ -26,8 +26,23 @@ internal static class ProfileStore
     internal sealed record RememberedLogin(string Email, string RefreshToken);
     internal sealed record AppRoutingProfile(string Name, Dictionary<string, string> Adapters,
         Dictionary<string, string> VpnRoutes, string? DefaultAdapter);
+    /// <summary>The tunnel and connection options a preset restores. Proxy credentials are never stored here.</summary>
+    internal sealed record PresetSettings(bool KillSwitch, bool PortableEngine, bool AutoMtu, bool BypassLan, string DnsOverride,
+        string BypassDestinations, string[] ExcludedApplications, int? TunnelMtu, int? KeepaliveSeconds, int PeerResponseSeconds,
+        int RouteTestSeconds, int OnDemandIdleSeconds, bool MinimizeToTray, bool RecoverStoppedTunnel);
+
+    /// <summary>
+    /// A saved setup. Older presets only hold the route, traffic scope, apps, and adapter. A full preset also
+    /// records which listed apps are on, how each connects, the default adapter, and the connection settings.
+    /// </summary>
     internal sealed record RoutingPreset(string Name, string RouteKey, string RouteName, bool EntirePc, string[] Apps, string? CatalogGame,
-        bool BlockOtherApps = false, string? AdapterId = null, bool HasAdapterChoice = false);
+        bool BlockOtherApps = false, string? AdapterId = null, bool HasAdapterChoice = false,
+        string[]? EnabledApps = null, Dictionary<string, string>? AppAdapters = null, Dictionary<string, string>? AppVpnRoutes = null,
+        string? DefaultAdapter = null, bool HasDefaultAdapter = false, PresetSettings? Settings = null)
+    {
+        [System.Text.Json.Serialization.JsonIgnore]
+        public bool IsFull => EnabledApps is not null;
+    }
     internal sealed record Preferences(bool MinimizeToTray, List<string> Favorites, bool EntirePcMode = false,
         bool KillSwitch = false, bool PortableEngine = false, string DnsOverride = "",
         bool Ipv6PreferenceConfigured = false, bool EnableIpv6Bindings = false, bool AutoMtu = false,
@@ -71,7 +86,13 @@ internal static class ProfileStore
     public static string? LoadAllocation(string email)
     {
         var path = CleanupPath(email);
-        return File.Exists(path) ? JsonSerializer.Deserialize<string>(Protect(File.ReadAllBytes(path), false)) : null;
+        if (!File.Exists(path)) return null;
+        // An unreadable record (corrupt, or protected for another Windows user) must not block signing in.
+        try { return JsonSerializer.Deserialize<string>(Protect(File.ReadAllBytes(path), false)); }
+        catch (Exception error) when (error is JsonException or System.ComponentModel.Win32Exception or IOException or UnauthorizedAccessException)
+        {
+            return null;
+        }
     }
     public static void SaveAllocation(string email, string? id)
     {

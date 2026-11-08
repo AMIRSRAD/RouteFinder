@@ -93,7 +93,6 @@ public sealed class DirectAppRouting : IDisposable
             uint opened = FwpmEngineOpen0(0, 10, 0, ref session, out var engine); // RPC_C_AUTHN_WINNT
             Check(opened, "Open Windows Filtering Platform");
             routing = new DirectAppRouting(engine, policySettings);
-            string[] disabled = new[] { "ipv4", "ipv6" }.Where(family => !WindowsPoliciesEnabled(family)).ToArray();
             Check(FwpmTransactionBegin0(engine, 0), "Begin direct routing update");
             foreach (var rule in configured)
             {
@@ -106,11 +105,8 @@ public sealed class DirectAppRouting : IDisposable
                 AddPolicy(engine, null, defaultLuid, 1, userCondition);
             }
             Check(FwpmTransactionCommit0(engine), "Apply direct routing rules");
-            foreach (string family in disabled)
-            {
-                routing.enabledFamilies.Add(family);
-                RunNetsh(family, "set", "global", "routepolicies=enabled", "store=active");
-            }
+            foreach (string family in new[] { "ipv4", "ipv6" })
+                routing.EnableRoutePolicies(family);
             return routing;
         }
         catch (Exception startupError)
@@ -158,8 +154,10 @@ public sealed class DirectAppRouting : IDisposable
     public void Dispose()
     {
         if (stopped) return;
-        engine.CloseChecked();
         var failures = new List<Exception>();
+        // Restore route policies even when closing the filtering engine fails; a retry closes the engine again.
+        try { engine.CloseChecked(); }
+        catch (Exception error) { failures.Add(error); }
         foreach (string family in enabledFamilies.ToArray())
         {
             try
@@ -175,16 +173,27 @@ public sealed class DirectAppRouting : IDisposable
         policySettings.Dispose();
     }
 
-    private static bool WindowsPoliciesEnabled(string family)
+    // netsh prints localized labels and values, so the setting is detected by comparing the parameter block
+    // before and after enabling it. Only a family this process changed is restored on Dispose.
+    private void EnableRoutePolicies(string family)
     {
-        foreach (string line in RunNetsh(family, "show", "global").Split('\n'))
+        var before = GlobalParameters(family);
+        try { RunNetsh(family, "set", "global", "routepolicies=enabled", "store=active"); }
+        catch
         {
-            var parts = line.Split(':', 2, StringSplitOptions.TrimEntries);
-            if (parts.Length != 2 || !parts[0].Equals("Route Policies", StringComparison.OrdinalIgnoreCase)) continue;
-            if (parts[1].Equals("enabled", StringComparison.OrdinalIgnoreCase)) return true;
-            if (parts[1].Equals("disabled", StringComparison.OrdinalIgnoreCase)) return false;
+            if (!before.SequenceEqual(GlobalParameters(family))) enabledFamilies.Add(family);
+            throw;
         }
-        throw new InvalidOperationException($"Could not determine the Windows {family.ToUpperInvariant()} route policy setting.");
+        if (!before.SequenceEqual(GlobalParameters(family))) enabledFamilies.Add(family);
+    }
+
+    private static string[] GlobalParameters(string family)
+    {
+        var lines = RunNetsh(family, "show", "global").Split('\n').Select(line => line.TrimEnd('\r')).ToArray();
+        int rule = Array.FindIndex(lines, line => line.Trim().Length >= 3 && line.Trim().All(character => character == '-'));
+        if (rule < 0) throw new InvalidOperationException($"Could not read the Windows {family.ToUpperInvariant()} global settings.");
+        // The first block after the heading rule holds the settings; later blocks are live statistics.
+        return lines.Skip(rule + 1).TakeWhile(line => line.Trim().Length > 0).ToArray();
     }
 
     private static string RunNetsh(string family, params string[] arguments)

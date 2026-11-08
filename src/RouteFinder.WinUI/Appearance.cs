@@ -32,14 +32,22 @@ public sealed partial class MainWindow
 
     void ApplyActionIcons()
     {
-        AddIcon(ActivityButton, "\uE9D9");
-        AddIcon(SettingsButton, "\uE713");
-        AddIcon(AdvancedButton, "\uE90F");
         AddIcon(AddAppsButton, "\uE710");
         AddIcon(AddRouteButton, "\uE710");
         AddIcon(TestRouteButton, "\uE9D9");
         AddIcon(TestAllButton, "\uE8FD");
         AddIcon(ConnectButton, "\uE7E8");
+        AddIcon(CopyActivityButton, "\uE8C8");
+        AddIcon(SaveReportButton, "\uE74E");
+        AddIcon(DiagnosticsButton, "\uE9F9");
+        // The round connect button stacks a large power glyph above its label.
+        if (ConnectButton.Content is StackPanel connect)
+        {
+            connect.Orientation = Orientation.Vertical;
+            connect.Spacing = 2;
+            connect.HorizontalAlignment = HorizontalAlignment.Center;
+            ((FontIcon)connect.Children[0]).FontSize = 24;
+        }
     }
 
     static void AddIcon(Button button, string glyph)
@@ -69,6 +77,8 @@ public sealed partial class MainWindow
         Translate(Root);
         for (int index = 0; index < Scope.Items.Count; index++)
             if (Scope.Items[index] is string label) Scope.Items[index] = UiLanguage.Text(label);
+        foreach (var item in Nav.MenuItems.OfType<NavigationViewItem>())
+            if (item.Content is string caption) item.Content = UiLanguage.Text(caption);
 
         static void Translate(UIElement element)
         {
@@ -84,6 +94,7 @@ public sealed partial class MainWindow
                     if (button.Content is string caption) button.Content = UiLanguage.Text(caption);
                     if (button.Flyout is MenuFlyout flyout)
                         foreach (var item in flyout.Items.OfType<MenuFlyoutItem>()) item.Text = UiLanguage.Text(item.Text);
+                    if (button.Flyout is Flyout { Content: UIElement flyoutContent }) Translate(flyoutContent);
                     break;
                 case ContentControl { Content: UIElement content }:
                     Translate(content);
@@ -95,43 +106,10 @@ public sealed partial class MainWindow
         }
     }
 
-    async Task OpenAppearance()
-    {
-        var languages = new ComboBox
-        {
-            Header = UiLanguage.Text("Language"), ItemsSource = new[] { "English", "فارسی", "العربية" },
-            SelectedIndex = UiLanguage.Index
-        };
-        var sizes = new ComboBox
-        {
-            Header = UiLanguage.Text("Window resolution"),
-            ItemsSource = WindowSizes.Select(size => $"{size.Width} × {size.Height}").ToArray(),
-            SelectedIndex = Math.Clamp(preferences.WindowPreset, 0, WindowSizes.Length - 1)
-        };
-        var tips = new ToggleSwitch { Header = UiLanguage.Text("Show tutorials"), IsOn = preferences.ShowTutorials };
-        var panel = new StackPanel { Spacing = 12, MinWidth = 270 };
-        panel.Children.Add(languages);
-        panel.Children.Add(sizes);
-        panel.Children.Add(tips);
-        var dialog = MakeDialog("Window and language preferences", panel, "Save");
-        if (await dialog.ShowAsync() != ContentDialogResult.Primary) return;
-        bool languageChanged = UiLanguage.Index != languages.SelectedIndex;
-        var updated = preferences with { WindowPreset = sizes.SelectedIndex, ShowTutorials = tips.IsOn };
-        WriteStore("preferences", () => ProfileStore.SavePreferences(updated));
-        preferences = updated;
-        if (languageChanged)
-        {
-            UiLanguage.Save(languages.SelectedIndex);
-            Report(UiLanguage.Text("Restart RouteFinder to apply the language."), InfoBarSeverity.Informational);
-        }
-        ApplyWindowSize();
-        if (!languageChanged && tips.IsOn) ShowRoutingTip();
-    }
-
     void ShowRoutingTip()
     {
         if (!Notice.IsOpen)
-            Report(UiLanguage.Text("Choose traffic, choose a route, then connect. You can test a route before connecting."),
+            Report(UiLanguage.Text("Add apps, pick a route, then press Connect. You can test routes on the Routes page first."),
                 InfoBarSeverity.Informational);
     }
 }

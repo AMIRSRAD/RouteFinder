@@ -13,7 +13,6 @@ public sealed partial class MainWindow
     bool appRouterVpn;
     bool AppRouterActive => directRouting is not null || appRouterVpn;
     Dictionary<string, string> appVpnDraft = new(StringComparer.OrdinalIgnoreCase);
-    bool windowsRoutingOpen;
     bool windowsRoutingSupported;
     Dictionary<string, string>? windowsAppDraft;
     string? windowsFallbackDraft;
@@ -27,28 +26,89 @@ public sealed partial class MainWindow
         public override string ToString() => Label;
     }
 
-    void OpenWindowsRouting(object sender, RoutedEventArgs args)
-    {
-        if (busy || Connected && !appRouterVpn || session.NeedsCleanup && !AppRouterActive || preview) return;
-        if (windowsRoutingOpen)
-        {
-            windowsRoutingOpen = false;
-            Refresh();
-            return;
-        }
+    enum AppRouteKind { Vpn, Adapter }
 
-        windowsRoutingOpen = true;
+    /// <summary>One entry in an app's "how does this app connect" menu.</summary>
+    sealed record AppRouteMode(AppRouteKind Kind, string AdapterId, string Label, bool Available = true)
+    {
+        public override string ToString() => Label;
+    }
+
+    // Loads the saved adapter rules once at startup. They are edited inline on the Apps page.
+    void InitializeAdapterRules()
+    {
         windowsRoutingSupported = DirectAppRouting.IsSupported();
-        if (windowsAppDraft is null)
+        windowsAppDraft = new(preferences.DirectAppAdapters ?? [], StringComparer.OrdinalIgnoreCase);
+        windowsFallbackDraft = preferences.DirectFallbackAdapter;
+        appVpnDraft = new(preferences.AppVpnRoutes ?? [], StringComparer.OrdinalIgnoreCase);
+        // Apps that only had an adapter rule (from the old Windows routing list) join the main list, switched on.
+        foreach (string path in windowsAppDraft.Keys.Where(path => !apps.Contains(path, StringComparer.OrdinalIgnoreCase)).ToArray())
         {
-            windowsAppDraft = new(preferences.DirectAppAdapters ?? [], StringComparer.OrdinalIgnoreCase);
-            windowsFallbackDraft = preferences.DirectFallbackAdapter;
-            appVpnDraft = new(preferences.AppVpnRoutes ?? [], StringComparer.OrdinalIgnoreCase);
+            apps.Add(path);
+            checkedApps.Add(path);
         }
         SyncWindowsAppSuggestions();
         ReloadWindowsAdapters();
-        Refresh();
-        StartWindowsRoutingButton.Focus(FocusState.Programmatic);
+    }
+
+    /// <summary>True when the app is pinned to a network adapter instead of going through the VPN.</summary>
+    bool IsAdapterApp(string path) => windowsAppDraft is { } draft && draft.GetValueOrDefault(path) is { Length: > 0 } &&
+        !appVpnDraft.ContainsKey(path);
+
+    /// <summary>Apps that are switched on and go through the VPN route.</summary>
+    IEnumerable<string> VpnApps() => apps.Where(path => checkedApps.Contains(path) && !IsAdapterApp(path));
+
+    AppRouteMode CurrentMode(string path, IReadOnlyList<AppRouteMode> modes)
+    {
+        string adapterId = windowsAppDraft?.GetValueOrDefault(path) ?? "";
+        if (adapterId.Length > 0 && !appVpnDraft.ContainsKey(path))
+            return modes.FirstOrDefault(mode => mode.Kind == AppRouteKind.Adapter &&
+                mode.AdapterId.Equals(adapterId, StringComparison.OrdinalIgnoreCase)) ?? modes[^1];
+        return modes[0];
+    }
+
+    List<AppRouteMode> RouteModes(string path)
+    {
+        var modes = new List<AppRouteMode> { new(AppRouteKind.Vpn, "", "Through VPN") };
+        modes.AddRange(windowsAdapters.Select(adapter => new AppRouteMode(AppRouteKind.Adapter, adapter.Id,
+            "Direct · " + adapter.Label, adapter.Available)));
+        string saved = windowsAppDraft?.GetValueOrDefault(path) ?? "";
+        if (saved.Length > 0 && !modes.Any(mode => mode.AdapterId.Equals(saved, StringComparison.OrdinalIgnoreCase)))
+            modes.Add(new(AppRouteKind.Adapter, saved, "Saved adapter unavailable", false));
+        return modes;
+    }
+
+    void ChooseAppRoute(string path, AppRouteMode mode)
+    {
+        if (windowsAppDraft is not { } draft || busy || AppRouterActive) return;
+        // The menu only decides how the app connects. Whether it is used at all is the tick box beside it.
+        suggestedWindowsApps.Remove(path);
+        if (mode.Kind == AppRouteKind.Vpn) draft[path] = "";
+        else
+        {
+            appVpnDraft.Remove(path);
+            draft[path] = mode.AdapterId;
+        }
+        StoreRouteChoices();
+        Refresh(refreshRouteBrowser: false);
+    }
+
+    // Remembers how every listed app connects, so nothing has to be set up again next time.
+    void StoreRouteChoices()
+    {
+        if (preview || windowsAppDraft is not { } draft || unavailableStores.Contains("preferences")) return;
+        try
+        {
+            var next = preferences with
+            {
+                DirectAppAdapters = draft.Where(rule => rule.Value.Length > 0 || appVpnDraft.ContainsKey(rule.Key))
+                    .ToDictionary(rule => rule.Key, rule => rule.Value, StringComparer.OrdinalIgnoreCase),
+                AppVpnRoutes = new(appVpnDraft, StringComparer.OrdinalIgnoreCase)
+            };
+            ProfileStore.SavePreferences(next);
+            preferences = next;
+        }
+        catch (Exception error) { Report($"Could not save how this app connects. {error.Message}"); }
     }
 
     bool SyncWindowsAppSuggestions()
@@ -113,7 +173,8 @@ public sealed partial class MainWindow
                 adapter.Id.Equals(windowsFallbackDraft ?? "", StringComparison.OrdinalIgnoreCase));
         }
         finally { loadingWindowsFallback = false; }
-        RenderWindowsAppRules();
+        RenderApps();
+        UpdateWindowsRoutingActions();
     }
 
     void WindowsFallbackChanged(object sender, SelectionChangedEventArgs args)
@@ -123,122 +184,13 @@ public sealed partial class MainWindow
         UpdateWindowsRoutingActions();
     }
 
-    async void BrowseWindowsApps(object sender, RoutedEventArgs args)
-    {
-        if (busy || AppRouterActive) return;
-        try
-        {
-            var files = await CreateFilePicker(".exe").PickMultipleFilesAsync();
-            if (windowsRoutingOpen && !busy && !AppRouterActive) AddWindowsApps(files.Select(file => file.Path));
-        }
-        catch (Exception error) { Report(error.Message); }
-    }
-
-    void AddWindowsApps(IEnumerable<string> paths)
-    {
-        if (windowsAppDraft is not { } draft || AppRouterActive) return;
-        foreach (string path in paths)
-        {
-            seenCheckedWindowsApps.Add(path);
-            suggestedWindowsApps.Remove(path);
-            draft.TryAdd(path, "");
-        }
-        RenderWindowsAppRules();
-    }
-
-    void RenderWindowsAppRules()
-    {
-        WindowsAppRows.Children.Clear();
-        if (windowsAppDraft is not { } draft) return;
-        if (draft.Count == 0)
-            WindowsAppRows.Children.Add(new TextBlock
-            {
-                Text = "No app rules yet. Add checked apps from the VPN workspace or browse for executable files.",
-                TextWrapping = TextWrapping.Wrap
-            });
-        foreach (var (path, adapterId) in draft.OrderBy(rule => Path.GetFileName(rule.Key), StringComparer.CurrentCultureIgnoreCase))
-        {
-            var choices = new List<WindowsAdapterChoice> { new("", "Use default / automatic uplink", true) };
-            choices.AddRange(windowsAdapters);
-            int selected = choices.FindIndex(adapter => adapter.Id.Equals(adapterId, StringComparison.OrdinalIgnoreCase));
-            if (selected < 0 && adapterId.Length > 0)
-            {
-                selected = choices.Count;
-                choices.Add(new(adapterId, "Saved adapter unavailable", false));
-            }
-
-            string app = Path.GetFileNameWithoutExtension(path);
-            var name = new TextBlock { Text = app, TextTrimming = TextTrimming.CharacterEllipsis, VerticalAlignment = VerticalAlignment.Center };
-            ToolTipService.SetToolTip(name, path);
-            var picker = new ComboBox
-            {
-                ItemsSource = choices, SelectedIndex = selected, PlaceholderText = "Choose adapter",
-                HorizontalAlignment = HorizontalAlignment.Stretch, IsEnabled = directRouting is null && !busy
-            };
-            AutomationProperties.SetName(picker, $"Internet adapter for {app}");
-            var routeChoices = Routes().Select(choice => new AppRouteOption(choice.Key, choice.Title)).ToList();
-            routeChoices.Insert(0, new("", "Direct / no VPN"));
-            string routeKey = appVpnDraft.GetValueOrDefault(path) ?? "";
-            if (!routeChoices.Any(choice => choice.Key == routeKey)) routeChoices.Add(new(routeKey, "Saved VPN route unavailable"));
-            var vpn = new ComboBox { ItemsSource = routeChoices, SelectedItem = routeChoices.First(choice => choice.Key == routeKey),
-                HorizontalAlignment = HorizontalAlignment.Stretch };
-            AutomationProperties.SetName(vpn, $"VPN route for {app}");
-            vpn.SelectionChanged += (_, _) =>
-            {
-                if (vpn.SelectedItem is not AppRouteOption choice) return;
-                if (choice.Key.Length == 0) appVpnDraft.Remove(path);
-                else appVpnDraft[path] = choice.Key;
-                UpdateWindowsRoutingActions();
-            };
-            picker.SelectionChanged += (_, _) =>
-            {
-                if (picker.SelectedItem is not WindowsAdapterChoice adapter) return;
-                draft[path] = adapter.Id;
-                UpdateWindowsRoutingActions();
-            };
-            var remove = new Button { Content = "Remove", IsEnabled = directRouting is null && !busy };
-            AutomationProperties.SetName(remove, $"Remove {app} rule");
-            remove.Click += (_, _) =>
-            {
-                draft.Remove(path);
-                appVpnDraft.Remove(path);
-                suggestedWindowsApps.Remove(path);
-                RenderWindowsAppRules();
-            };
-            var row = new Grid { ColumnSpacing = 8 };
-            row.ColumnDefinitions.Add(new() { Width = new GridLength(1, GridUnitType.Star) });
-            row.ColumnDefinitions.Add(new() { Width = new GridLength(1.4, GridUnitType.Star) });
-            row.ColumnDefinitions.Add(new() { Width = GridLength.Auto });
-            row.RowDefinitions.Add(new() { Height = GridLength.Auto });
-            row.RowDefinitions.Add(new() { Height = GridLength.Auto });
-            row.RowDefinitions.Add(new() { Height = GridLength.Auto });
-            Grid.SetColumn(picker, 1);
-            Grid.SetColumn(remove, 2);
-            row.Children.Add(name);
-            row.Children.Add(picker);
-            Grid.SetRow(vpn, 2);
-            Grid.SetColumnSpan(vpn, 3);
-            row.Children.Add(vpn);
-            row.Children.Add(remove);
-            row.SizeChanged += (_, args) =>
-            {
-                bool compact = args.NewSize.Width < 430;
-                Grid.SetRow(picker, compact ? 1 : 0);
-                Grid.SetColumn(picker, compact ? 0 : 1);
-                Grid.SetColumnSpan(picker, compact ? 3 : 1);
-                row.RowSpacing = compact ? 4 : 0;
-            };
-            WindowsAppRows.Children.Add(row);
-        }
-        UpdateWindowsRoutingActions();
-    }
-
     void UpdateWindowsRoutingActions()
     {
-        if (!windowsRoutingOpen || windowsAppDraft is not { } draft) return;
+        if (windowsAppDraft is not { } draft) return;
         bool active = AppRouterActive;
         bool editable = !active && !busy && !Connected && !session.NeedsCleanup;
-        var assigned = draft.Where(rule => rule.Value.Length > 0 || appVpnDraft.ContainsKey(rule.Key)).ToArray();
+        // Only apps that are switched on take part.
+        var assigned = draft.Where(rule => checkedApps.Contains(rule.Key) && (rule.Value.Length > 0 || appVpnDraft.ContainsKey(rule.Key))).ToArray();
         bool fallbackReady = windowsFallbackDraft is null || windowsAdapters.Any(adapter =>
             adapter.HasGateway && adapter.Id.Equals(windowsFallbackDraft, StringComparison.OrdinalIgnoreCase));
         bool readyToStart = (assigned.Length > 0 || windowsFallbackDraft is not null) && fallbackReady && assigned.All(rule =>
@@ -247,25 +199,28 @@ public sealed partial class MainWindow
         bool clearing = assigned.Length == 0 && windowsFallbackDraft is null &&
             (preferences.DirectAppAdapters is { Count: > 0 } || preferences.DirectFallbackAdapter is not null ||
                 preferences.AppVpnRoutes is { Count: > 0 });
-        WindowsRoutingStatus.Text = active ? $"Active · {assigned.Length} app rules" +
-            (windowsFallbackDraft is null ? "" : " · Default adapter on") : "Stopped";
-        StartWindowsRoutingButton.Content = active ? "Stop routing" : clearing ? "Clear saved rules" : "Save & apply";
+        int pinned = assigned.Count(rule => rule.Value.Length > 0);
+        WindowsRoutingStatus.Text = UiLanguage.Text(active
+            ? $"Adapter routing is on · {pinned} app{(pinned == 1 ? "" : "s")}" + (windowsFallbackDraft is null ? "" : " · default adapter on")
+            : pinned > 0 ? $"{pinned} app{(pinned == 1 ? "" : "s")} pinned to an adapter"
+            : windowsFallbackDraft is not null ? "Default adapter set for other apps" : "Saved adapter rules");
+        StartWindowsRoutingButton.Content = UiLanguage.Text(active ? "Stop routing" : clearing ? "Clear saved rules" : "Save & apply");
         StartWindowsRoutingButton.IsEnabled = !busy && (active || editable && (clearing || readyToStart && windowsRoutingSupported));
-        BrowseWindowsAppsButton.IsEnabled = editable;
+        AdapterRulesBar.Visibility = active || pinned > 0 || windowsFallbackDraft is not null || clearing
+            ? Visibility.Visible : Visibility.Collapsed;
         WindowsFallbackAdapter.IsEnabled = editable;
         RefreshWindowsAdaptersButton.IsEnabled = !busy;
-        foreach (var row in WindowsAppRows.Children.OfType<Grid>())
-            foreach (var control in row.Children.OfType<Control>()) control.IsEnabled = editable;
-        WindowsRoutingHint.Text = active ? "Fully quit and reopen assigned apps to replace their existing connections. Stop routing before editing rules or starting a VPN."
+        WindowsRoutingHint.Text = UiLanguage.Text(active ? "Fully quit and reopen pinned apps to replace their existing connections. Stop routing before editing rules or starting a VPN."
             : !windowsRoutingSupported ? "This Windows build does not expose per-app connection policies."
             : !fallbackReady ? "Reconnect the saved default adapter or choose a connected adapter with a gateway."
-            : assigned.Length > 0 && !readyToStart ? "Each assigned app needs an existing executable and a connected adapter."
-            : "Explicit app rules take priority. The default adapter applies to your other apps while routing is active.";
+            : assigned.Length > 0 && !readyToStart ? "Each pinned app needs an existing executable and a connected adapter."
+            : "Pinned apps use their adapter directly. Apply this, then reopen the apps.");
     }
 
     bool StoreWindowsAppRules()
     {
         if (windowsAppDraft is not { } draft) return false;
+        if (preview) return true;
         try
         {
             var next = preferences with { DirectAppAdapters = draft.Where(rule => rule.Value.Length > 0)
@@ -294,10 +249,10 @@ public sealed partial class MainWindow
         }
         if (session.NeedsCleanup) return;
         if (windowsAppDraft is not { } draft) return;
-        var assignments = draft.Where(rule => rule.Value.Length > 0 && !appVpnDraft.ContainsKey(rule.Key))
+        var assignments = draft.Where(rule => checkedApps.Contains(rule.Key) && rule.Value.Length > 0 && !appVpnDraft.ContainsKey(rule.Key))
             .Select(rule => new DirectAppRouting.Rule(rule.Key, rule.Value)).ToArray();
         string? fallback = windowsFallbackDraft;
-        var vpnRules = draft.Where(rule => appVpnDraft.ContainsKey(rule.Key)).ToArray();
+        var vpnRules = draft.Where(rule => checkedApps.Contains(rule.Key) && appVpnDraft.ContainsKey(rule.Key)).ToArray();
         RouteChoice? vpnRoute = null;
         string? uplink = null;
         if (vpnRules.Length > 0)
@@ -357,10 +312,6 @@ public sealed partial class MainWindow
         });
     }
 
-    sealed record AppRouteOption(string Key, string Label)
-    {
-        public override string ToString() => Label;
-    }
 
     async Task StopAppRouter()
     {

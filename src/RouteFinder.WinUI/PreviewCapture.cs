@@ -23,10 +23,10 @@ public sealed partial class MainWindow
                 Root.Loaded += (_, _) => loaded.TrySetResult();
                 await loaded.Task;
             }
-            if (!ConnectButton.IsEnabled || !AddRouteButton.IsEnabled || ImportRouteCommand.IsEnabled || !AdvancedButton.IsEnabled ||
+            if (!ConnectButton.IsEnabled || !AddRouteButton.IsEnabled || ImportRouteCommand.IsEnabled || !SettingsSaveButton.IsEnabled ||
                 (RouteList.SelectedItem as RoutePickerRow)?.Key != "local:Amsterdam · Home relay" || checkedApps.Count != 2)
                 throw new InvalidOperationException("The preview did not render its sample route and app selection.");
-            if (!TestRouteButton.IsEnabled || !CompareButton.IsEnabled || !SettingsButton.IsEnabled || !RouteOptionsButton.IsEnabled ||
+            if (!TestRouteButton.IsEnabled || !CompareButton.IsEnabled || !SettingsGate.IsEnabled || !RouteOptionsButton.IsEnabled ||
                 !DestinationButton.IsEnabled || !ConnectionActionsButton.IsEnabled || !TestAllButton.IsEnabled)
                 throw new InvalidOperationException("The preview did not expose route tests, options, and settings.");
             if (DisplayArea.GetFromWindowId(AppWindow.Id, DisplayAreaFallback.Nearest) is { } display)
@@ -81,21 +81,29 @@ public sealed partial class MainWindow
                 RecordRtt(series[i], now - (series.Length - i - 1) * System.Diagnostics.Stopwatch.Frequency);
             if (LiveVariation.Text == "—" || LatencyTrend.Points.Count != series.Length)
                 throw new InvalidOperationException("The live panel did not display the RTT trend and variation.");
+            ShowPage("home");
             await Task.Delay(350);
-            var bitmap = new RenderTargetBitmap();
-            await bitmap.RenderAsync(Root);
-            byte[] pixels = (await bitmap.GetPixelsAsync()).ToArray();
-            if (pixels.Length == 0) throw new InvalidOperationException("The live workspace could not be rendered.");
-            using var file = File.Create(path);
-            using var output = file.AsRandomAccessStream();
-            var encoder = await BitmapEncoder.CreateAsync(BitmapEncoder.PngEncoderId, output);
-            encoder.SetPixelData(BitmapPixelFormat.Bgra8, BitmapAlphaMode.Ignore, (uint)bitmap.PixelWidth,
-                (uint)bitmap.PixelHeight, 96, 96, pixels);
-            await encoder.FlushAsync();
+            await CaptureRoot(path);
+            CheckHomeSymmetry("default size");
+            var card = StatusCard.TransformToVisual(Root).TransformBounds(
+                new Windows.Foundation.Rect(0, 0, StatusCard.ActualWidth, StatusCard.ActualHeight));
+            if (card.Left < 0 || card.Right > Root.ActualWidth + 1)
+                throw new InvalidOperationException("The Home status card extended outside the window.");
+            // Extra screenshots of each page for design review, next to the main capture.
+            foreach (string page in new[] { "apps", "routes", "providers", "network", "activity", "settings" })
+            {
+                ShowPage(page);
+                await Task.Delay(300);
+                await CaptureRoot(Path.ChangeExtension(path, null) + "-" + page + ".png");
+            }
+            ShowPage("home");
 
             ToggleConnection(this, new RoutedEventArgs());
             if (ConnectionTitle.Text != "Disconnected" || !Scope.IsEnabled)
                 throw new InvalidOperationException("Disconnecting did not restore the editable preview.");
+            await Task.Delay(200);
+            await CaptureRoot(Path.ChangeExtension(path, null) + "-idle.png");
+            CheckHomeSymmetry("idle");
             if (!ComparePublicIps("192.0.2.1", "192.0.2.1", "192.0.2.2", "192.0.2.1").Contains("stayed the same") ||
                 !ComparePublicIps("192.0.2.1", "192.0.2.1", "192.0.2.2", "192.0.2.2").Contains("changed too"))
                 throw new InvalidOperationException("The per-app verification did not distinguish a changed control browser.");
@@ -111,6 +119,7 @@ public sealed partial class MainWindow
             UpdateTrafficHealth(20, 200, true);
             if (HealthAlert.Visibility != Visibility.Collapsed)
                 throw new InvalidOperationException("The alert did not clear when incoming bytes resumed.");
+            await VerifyWideLayout(path);
             await VerifyNarrowLayout();
             bool exitDeferred = false;
             await Run("Checking exit during an operation…", async () =>
@@ -156,18 +165,65 @@ public sealed partial class MainWindow
             throw new InvalidOperationException("Windows-user profile encryption did not round-trip.");
     }
 
+    async Task CaptureRoot(string file)
+    {
+        var bitmap = new RenderTargetBitmap();
+        await bitmap.RenderAsync(Root);
+        byte[] pixels = (await bitmap.GetPixelsAsync()).ToArray();
+        if (pixels.Length == 0) throw new InvalidOperationException("The live workspace could not be rendered.");
+        using var stream = File.Create(file);
+        using var output = stream.AsRandomAccessStream();
+        var encoder = await BitmapEncoder.CreateAsync(BitmapEncoder.PngEncoderId, output);
+        encoder.SetPixelData(BitmapPixelFormat.Bgra8, BitmapAlphaMode.Ignore, (uint)bitmap.PixelWidth,
+            (uint)bitmap.PixelHeight, 96, 96, pixels);
+        await encoder.FlushAsync();
+    }
+
+    // Home must sit centered with equal space above and below (and left and right) at any window size.
+    void CheckHomeSymmetry(string state)
+    {
+        var box = HomeScale.TransformToVisual(HomePage).TransformBounds(
+            new Windows.Foundation.Rect(0, 0, HomeScale.ActualWidth, HomeScale.ActualHeight));
+        double top = box.Top, bottom = HomePage.ActualHeight - box.Bottom, left = box.Left, right = HomePage.ActualWidth - box.Right;
+        if (Math.Abs(top - bottom) > 2 || Math.Abs(left - right) > 2 || top < 0 || left < 0)
+            throw new InvalidOperationException($"Home is not centered at {state}: top {top:0}, bottom {bottom:0}, left {left:0}, right {right:0}.");
+    }
+
+    // A maximized window must use its space: Home grows and stays centered, and other pages run edge to edge.
+    async Task VerifyWideLayout(string path)
+    {
+        ShowPage("home");
+        AppWindow.Resize(new SizeInt32(1900, 1000));
+        await Task.Delay(500);
+        CheckHomeSymmetry("a large window");
+        if (HomeScale.ActualWidth < 900)
+            throw new InvalidOperationException("Home did not grow to use a large window.");
+        await CaptureRoot(Path.ChangeExtension(path, null) + "-wide.png");
+        ShowPage("routes");
+        await Task.Delay(250);
+        var list = RouteList.TransformToVisual(Root).TransformBounds(
+            new Windows.Foundation.Rect(0, 0, RouteList.ActualWidth, RouteList.ActualHeight)).Right;
+        if (list < Root.ActualWidth - 80)
+            throw new InvalidOperationException("The route list stopped short of the window edge in a large window.");
+        await CaptureRoot(Path.ChangeExtension(path, null) + "-wide-routes.png");
+        ShowPage("home");
+    }
+
     async Task VerifyNarrowLayout()
     {
         apps.AddRange(Enumerable.Range(1, 25).Select(index => $@"C:\Apps\Example-{index}.exe"));
         RenderApps();
         Refresh();
+        ShowPage("apps");
         AppWindow.Resize(new SizeInt32(620, 690));
         for (int attempt = 0; attempt < 20 &&
-            (Grid.GetRow(RouteCard) != 1 || AppScroller.ScrollableHeight <= 0); attempt++) await Task.Delay(50);
-        if (Grid.GetRow(RouteCard) != 1 || Grid.GetRow(HeaderActions) != 1)
-            throw new InvalidOperationException("The route card and navigation did not stack at a narrow window size.");
+            (Nav.DisplayMode == NavigationViewDisplayMode.Expanded || AppScroller.ScrollableHeight <= 0); attempt++) await Task.Delay(50);
+        if (Nav.DisplayMode == NavigationViewDisplayMode.Expanded)
+            throw new InvalidOperationException("The navigation pane did not collapse at a narrow window size.");
         if (AppScroller.ScrollableHeight <= 0)
-            throw new InvalidOperationException("A long app list did not scroll inside its card.");
+            throw new InvalidOperationException("A long app list did not scroll inside the Apps page.");
+        ShowPage("home");
+        await Task.Delay(300);
         var bounds = ConnectButton.TransformToVisual(Root).TransformBounds(
             new Windows.Foundation.Rect(0, 0, ConnectButton.ActualWidth, ConnectButton.ActualHeight));
         if (bounds.Top < 0 || bounds.Bottom > Root.ActualHeight || bounds.Left < 0 || bounds.Right > Root.ActualWidth)

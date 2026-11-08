@@ -225,26 +225,28 @@ public sealed partial class MainWindow
                 await Run("Refreshing EZConnect routes…", async () => ApplyCatalog(await session.ReloadAsync()));
                 break;
             case ContentDialogResult.Secondary:
-                await Run("Signing out of EZConnect…", async () =>
-                {
-                    try { await session.SignOutAsync(); }
-                    finally
-                    {
-                        if (!session.SignedIn)
-                        {
-                            signedInEmail = rememberedEmail = null;
-                            accountCatalog = null;
-                            accountLoadedAt = null;
-                            selectedGame = null;
-                            ClearLogin();
-                            serviceRoutes.Clear();
-                            if (route?.Service is not null) route = Routes().FirstOrDefault();
-                        }
-                    }
-                });
+                await SignOutAccount();
                 break;
         }
     }
+
+    Task SignOutAccount() => Run("Signing out of EZConnect…", async () =>
+    {
+        try { await session.SignOutAsync(); }
+        finally
+        {
+            if (!session.SignedIn)
+            {
+                signedInEmail = rememberedEmail = null;
+                accountCatalog = null;
+                accountLoadedAt = null;
+                selectedGame = null;
+                ClearLogin();
+                serviceRoutes.Clear();
+                if (route?.Service is not null) route = Routes().FirstOrDefault();
+            }
+        }
+    });
 
     static double? ReadNumber(JsonElement source, string field) =>
         source.TryGetProperty(field, out var value) && value.ValueKind == JsonValueKind.Number &&

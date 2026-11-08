@@ -47,39 +47,39 @@ public sealed partial class MainWindow
                 window.UplinkFor(window.Routes().Single(item => item.Key == "local:Existing profile")) is not null)
                 throw new InvalidOperationException("The saved internet adapter must apply only to its own route.");
             if (window.preferences.DirectAppAdapters?.GetValueOrDefault(selected) != "fixture-direct-adapter" ||
-                window.directRouting is not null || !window.WindowsRoutingButton.IsEnabled)
+                window.directRouting is not null)
                 throw new InvalidOperationException("Windows app assignments should load without starting routing.");
-            window.OpenWindowsRouting(window.WindowsRoutingButton, new Microsoft.UI.Xaml.RoutedEventArgs());
             if (window.WindowsFallbackAdapter.SelectedItem is not WindowsAdapterChoice { Id: "fixture-fallback", HasGateway: false })
                 throw new InvalidOperationException("The saved fallback should remain visible when its adapter is unavailable.");
-            if (window.WindowsRoutingPanel.Visibility != Microsoft.UI.Xaml.Visibility.Visible ||
-                window.Cards.Visibility != Microsoft.UI.Xaml.Visibility.Collapsed ||
-                window.WindowsAppRows.Children.Count != 1 ||
+            if (window.AppRows.Children.Count != 3 ||
+                window.AdapterRulesBar.Visibility != Microsoft.UI.Xaml.Visibility.Visible ||
                 window.windowsAppDraft?.GetValueOrDefault(selected) != "fixture-direct-adapter" ||
                 window.windowsAppDraft?.ContainsKey(olderApp) != false || window.StartWindowsRoutingButton.IsEnabled)
-                throw new InvalidOperationException("Windows routing must import checked apps, preserve saved assignments, and reject missing adapters.");
+                throw new InvalidOperationException("The Apps list must show saved adapter rules and reject missing adapters.");
+            if (((Grid)window.AppRows.Children[0]).Children.OfType<ComboBox>().Single().SelectedItem is not
+                AppRouteMode { Kind: AppRouteKind.Adapter, Available: false })
+                throw new InvalidOperationException("An app pinned to an unavailable adapter must say so in its route menu.");
             var originalSize = window.AppWindow.Size;
             var compact = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
             void OnCompact(object sender, Microsoft.UI.Xaml.SizeChangedEventArgs args)
             {
-                if (args.NewSize.Width < 460) compact.TrySetResult();
+                if (window.Nav.DisplayMode == NavigationViewDisplayMode.Minimal) compact.TrySetResult();
             }
             window.Workspace.SizeChanged += OnCompact;
             try
             {
                 window.AppWindow.Resize(new Windows.Graphics.SizeInt32(420, 460));
                 await compact.Task.WaitAsync(TimeSpan.FromSeconds(5));
-                if (Grid.GetRow(window.SettingsButton) != 1 || Grid.GetRow(window.AdvancedButton) != 1)
-                    throw new InvalidOperationException("The toolbar must wrap at narrow window widths.");
+                if (window.Nav.DisplayMode != NavigationViewDisplayMode.Minimal)
+                    throw new InvalidOperationException("The navigation pane must collapse at narrow window widths.");
             }
             finally
             {
                 window.Workspace.SizeChanged -= OnCompact;
                 window.AppWindow.Resize(originalSize);
             }
-            window.OpenWindowsRouting(window.WindowsRoutingButton, new Microsoft.UI.Xaml.RoutedEventArgs());
-            if (window.Cards.Visibility != Microsoft.UI.Xaml.Visibility.Visible || window.route.Key != "local:Preferred route")
-                throw new InvalidOperationException("Returning from Windows routing should restore the VPN workspace selection.");
+            if (window.route.Key != "local:Preferred route")
+                throw new InvalidOperationException("Resizing the window must not change the selected route.");
             const string addedApp = @"C:\Games\added.exe";
             window.AddApplications([addedApp]);
             if (window.windowsAppDraft?.GetValueOrDefault(addedApp) != "")

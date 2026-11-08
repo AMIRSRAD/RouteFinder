@@ -1,208 +1,635 @@
 <Window x:Class="RouteFinder.WinUI.MainWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:local="using:RouteFinder.WinUI"
         Title="RouteFinder">
-    <Grid x:Name="Root" RequestedTheme="Dark" Background="#101018">
+    <Window.SystemBackdrop>
+        <MicaBackdrop />
+    </Window.SystemBackdrop>
+    <Grid x:Name="Root">
         <Grid.Resources>
+            <!-- Cards and rows follow the Windows light/dark theme through Fluent theme brushes. -->
+            <Style x:Key="Card" TargetType="Border">
+                <Setter Property="Background">
+                    <Setter.Value>
+                        <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
+                            <GradientStop Color="{ThemeResource CardBackgroundFillColorSecondary}" Offset="0" />
+                            <GradientStop Color="{ThemeResource CardBackgroundFillColorDefault}" Offset="1" />
+                        </LinearGradientBrush>
+                    </Setter.Value>
+                </Setter>
+                <Setter Property="BorderBrush" Value="{ThemeResource CardStrokeColorDefaultBrush}" />
+                <Setter Property="BorderThickness" Value="1" />
+                <Setter Property="CornerRadius" Value="8" />
+                <Setter Property="Padding" Value="20" />
+            </Style>
+            <Style x:Key="AppRow" TargetType="Grid">
+                <Setter Property="Background">
+                    <Setter.Value>
+                        <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
+                            <GradientStop Color="{ThemeResource CardBackgroundFillColorSecondary}" Offset="0" />
+                            <GradientStop Color="{ThemeResource CardBackgroundFillColorDefault}" Offset="1" />
+                        </LinearGradientBrush>
+                    </Setter.Value>
+                </Setter>
+                <Setter Property="BorderBrush" Value="{ThemeResource CardStrokeColorDefaultBrush}" />
+                <Setter Property="BorderThickness" Value="1" />
+                <Setter Property="CornerRadius" Value="8" />
+                <Setter Property="MinHeight" Value="52" />
+            </Style>
+            <Style x:Key="PageHeader" TargetType="Grid">
+                <Setter Property="Background">
+                    <Setter.Value>
+                        <LinearGradientBrush StartPoint="0,0" EndPoint="1,1" Opacity="0.2">
+                            <GradientStop Color="{ThemeResource SystemAccentColor}" Offset="0" />
+                            <GradientStop Color="Transparent" Offset="0.85" />
+                        </LinearGradientBrush>
+                    </Setter.Value>
+                </Setter>
+                <Setter Property="CornerRadius" Value="8" />
+                <Setter Property="Padding" Value="20,14" />
+                <Setter Property="BorderThickness" Value="1" />
+                <Setter Property="BorderBrush" Value="{ThemeResource CardStrokeColorDefaultBrush}" />
+            </Style>
+            <Style x:Key="PageHeaderBorder" TargetType="Border">
+                <Setter Property="Background">
+                    <Setter.Value>
+                        <LinearGradientBrush StartPoint="0,0" EndPoint="1,1" Opacity="0.2">
+                            <GradientStop Color="{ThemeResource SystemAccentColor}" Offset="0" />
+                            <GradientStop Color="Transparent" Offset="0.85" />
+                        </LinearGradientBrush>
+                    </Setter.Value>
+                </Setter>
+                <Setter Property="CornerRadius" Value="8" />
+                <Setter Property="Padding" Value="20,14" />
+                <Setter Property="BorderThickness" Value="1" />
+                <Setter Property="BorderBrush" Value="{ThemeResource CardStrokeColorDefaultBrush}" />
+            </Style>
+            <Style x:Key="PageTitle" TargetType="TextBlock" BasedOn="{StaticResource TitleTextBlockStyle}">
+                <Setter Property="VerticalAlignment" Value="Center" />
+            </Style>
+            <Style x:Key="SectionLabel" TargetType="TextBlock" BasedOn="{StaticResource BodyStrongTextBlockStyle}">
+                <Setter Property="Margin" Value="2,8,0,2" />
+            </Style>
+            <Style x:Key="Secondary" TargetType="TextBlock" BasedOn="{StaticResource BodyTextBlockStyle}">
+                <Setter Property="Foreground" Value="{ThemeResource TextFillColorSecondaryBrush}" />
+                <Setter Property="TextWrapping" Value="Wrap" />
+            </Style>
+            <Style x:Key="Caption" TargetType="TextBlock" BasedOn="{StaticResource CaptionTextBlockStyle}">
+                <Setter Property="Foreground" Value="{ThemeResource TextFillColorSecondaryBrush}" />
+            </Style>
+            <Style x:Key="Metric" TargetType="TextBlock" BasedOn="{StaticResource SubtitleTextBlockStyle}" />
+            <local:ToneBrushConverter x:Key="ToneBrush" />
+            <!-- Rounded square behind an icon or badge, used by every list row. -->
+            <Style x:Key="IconTile" TargetType="Border">
+                <Setter Property="Width" Value="36" />
+                <Setter Property="Height" Value="36" />
+                <Setter Property="CornerRadius" Value="8" />
+                <Setter Property="Background">
+                    <Setter.Value><SolidColorBrush Color="{ThemeResource SystemAccentColor}" Opacity="0.16" /></Setter.Value>
+                </Setter>
+                <Setter Property="VerticalAlignment" Value="Center" />
+            </Style>
+            <Style x:Key="IconTileGrid" TargetType="Grid">
+                <Setter Property="Width" Value="36" />
+                <Setter Property="Height" Value="36" />
+                <Setter Property="CornerRadius" Value="8" />
+                <Setter Property="Padding" Value="6" />
+                <Setter Property="Background">
+                    <Setter.Value><SolidColorBrush Color="{ThemeResource SystemAccentColor}" Opacity="0.16" /></Setter.Value>
+                </Setter>
+                <Setter Property="VerticalAlignment" Value="Center" />
+            </Style>
+            <Style x:Key="TileGlyph" TargetType="FontIcon">
+                <Setter Property="FontSize" Value="16" />
+                <Setter Property="Foreground" Value="{ThemeResource AccentTextFillColorPrimaryBrush}" />
+                <Setter Property="HorizontalAlignment" Value="Center" />
+                <Setter Property="VerticalAlignment" Value="Center" />
+            </Style>
+            <Style x:Key="MetricTile" TargetType="Border">
+                <Setter Property="Background" Value="{ThemeResource SubtleFillColorSecondaryBrush}" />
+                <Setter Property="CornerRadius" Value="8" />
+                <Setter Property="Padding" Value="14,8" />
+            </Style>
+            <!-- A full-width row that behaves like a link: hover highlight, chevron on the right. -->
+            <Style x:Key="RowButton" TargetType="Button">
+                <Setter Property="Background" Value="Transparent" />
+                <Setter Property="BorderThickness" Value="0" />
+                <Setter Property="CornerRadius" Value="0" />
+                <Setter Property="Padding" Value="20,14" />
+                <Setter Property="HorizontalAlignment" Value="Stretch" />
+                <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+            </Style>
+            <Style x:Key="PageSubtitle" TargetType="TextBlock" BasedOn="{StaticResource BodyTextBlockStyle}">
+                <Setter Property="Foreground" Value="{ThemeResource TextFillColorSecondaryBrush}" />
+                <Setter Property="TextWrapping" Value="Wrap" />
+                <Setter Property="Margin" Value="0,2,0,0" />
+            </Style>
             <DataTemplate x:Key="RoutePickerRowTemplate">
-                <Grid ColumnSpacing="10" Margin="0,7" AutomationProperties.Name="{Binding AccessibleName}">
-                    <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-                    <StackPanel Spacing="3">
-                        <TextBlock Text="{Binding Title}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" ToolTipService.ToolTip="{Binding Title}" />
-                        <TextBlock Text="{Binding Detail}" TextTrimming="CharacterEllipsis" FontSize="12" Opacity=".75" />
-                    </StackPanel>
+                <Grid ColumnSpacing="14" Padding="6,10" AutomationProperties.Name="{Binding AccessibleName}">
+                    <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                    <Border Style="{StaticResource IconTile}">
+                        <TextBlock Text="{Binding Badge}" FontSize="12" FontWeight="SemiBold" HorizontalAlignment="Center" VerticalAlignment="Center"
+                                   Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}" />
+                    </Border>
                     <StackPanel Grid.Column="1" Spacing="2" VerticalAlignment="Center">
-                        <TextBlock Text="{Binding Result}" Foreground="#C9B9FF" FontSize="12" HorizontalAlignment="Right" />
-                        <TextBlock Text="{Binding TestAge}" Foreground="#B4B3CA" FontSize="10" HorizontalAlignment="Right" />
+                        <TextBlock Text="{Binding Title}" Style="{StaticResource BodyStrongTextBlockStyle}" TextTrimming="CharacterEllipsis"
+                                   ToolTipService.ToolTip="{Binding Title}" />
+                        <TextBlock Text="{Binding Detail}" Style="{StaticResource CaptionTextBlockStyle}" TextTrimming="CharacterEllipsis"
+                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                    </StackPanel>
+                    <StackPanel Grid.Column="2" Spacing="4" VerticalAlignment="Center">
+                        <Border CornerRadius="10" Padding="10,3" HorizontalAlignment="Right"
+                                Background="{Binding Tone, Converter={StaticResource ToneBrush}, ConverterParameter=background}">
+                            <TextBlock Text="{Binding Result}" FontSize="12" FontWeight="SemiBold"
+                                       Foreground="{Binding Tone, Converter={StaticResource ToneBrush}}" />
+                        </Border>
+                        <TextBlock Text="{Binding TestAge}" Style="{StaticResource CaptionTextBlockStyle}" HorizontalAlignment="Right"
+                                   Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
                     </StackPanel>
                 </Grid>
             </DataTemplate>
-            <SolidColorBrush x:Key="CardFill" Color="#1B1B28" />
-            <SolidColorBrush x:Key="CardBorder" Color="#353549" />
-            <SolidColorBrush x:Key="SubtleText" Color="#B4B3CA" />
-            <SolidColorBrush x:Key="AccentText" Color="#C2B3FF" />
-            <Style x:Key="Card" TargetType="Border">
-                <Setter Property="Background" Value="{StaticResource CardFill}" />
-                <Setter Property="BorderBrush" Value="{StaticResource CardBorder}" />
-                <Setter Property="BorderThickness" Value="1" />
-                <Setter Property="CornerRadius" Value="18" />
-                <Setter Property="Padding" Value="22" />
-            </Style>
         </Grid.Resources>
         <Grid.RowDefinitions>
             <RowDefinition Height="48" />
             <RowDefinition Height="*" />
         </Grid.RowDefinitions>
-        <Grid x:Name="WindowHeader" Background="#151520">
-            <StackPanel Orientation="Horizontal" Spacing="10" Margin="18,0" VerticalAlignment="Center">
-                <Viewbox Width="28" Height="28">
+
+        <!-- Title bar -->
+        <Grid x:Name="WindowHeader" Background="Transparent">
+            <StackPanel Orientation="Horizontal" Spacing="10" Margin="16,0" VerticalAlignment="Center">
+                <Viewbox Width="20" Height="20">
                     <Canvas Width="256" Height="256">
                         <Rectangle Canvas.Left="7" Canvas.Top="7" Width="242" Height="242" RadiusX="57" RadiusY="57"
-                                   Fill="#2D214A" Stroke="#64518B" StrokeThickness="5" />
-                        <Path Data="M 57,169 L 113,104 L 155,142 L 199,78" Stroke="#CFBCFF" StrokeThickness="16" />
-                        <Ellipse Canvas.Left="45" Canvas.Top="157" Width="24" Height="24" Fill="#2D214A" Stroke="#CFBCFF" StrokeThickness="8" />
-                        <Ellipse Canvas.Left="101" Canvas.Top="92" Width="24" Height="24" Fill="#2D214A" Stroke="#CFBCFF" StrokeThickness="8" />
-                        <Ellipse Canvas.Left="143" Canvas.Top="130" Width="24" Height="24" Fill="#2D214A" Stroke="#CFBCFF" StrokeThickness="8" />
-                        <Ellipse Canvas.Left="187" Canvas.Top="66" Width="24" Height="24" Fill="#2D214A" Stroke="#CFBCFF" StrokeThickness="8" />
+                                   Fill="{ThemeResource AccentFillColorDefaultBrush}" />
+                        <Path Data="M 57,169 L 113,104 L 155,142 L 199,78" Stroke="{ThemeResource TextOnAccentFillColorPrimaryBrush}" StrokeThickness="18" />
+                        <Ellipse Canvas.Left="45" Canvas.Top="157" Width="24" Height="24" Fill="{ThemeResource TextOnAccentFillColorPrimaryBrush}" />
+                        <Ellipse Canvas.Left="187" Canvas.Top="66" Width="24" Height="24" Fill="{ThemeResource TextOnAccentFillColorPrimaryBrush}" />
                     </Canvas>
                 </Viewbox>
-                <TextBlock Text="RouteFinder" FontWeight="SemiBold" VerticalAlignment="Center" />
-                <TextBlock x:Name="PreviewLabel" Text="DESIGN PREVIEW" Foreground="{StaticResource AccentText}" FontSize="10"
-                           FontWeight="SemiBold" CharacterSpacing="100" VerticalAlignment="Center" Visibility="Collapsed" />
+                <TextBlock Text="RouteFinder" Style="{StaticResource CaptionTextBlockStyle}" VerticalAlignment="Center" />
+                <Border x:Name="PreviewLabel" Visibility="Collapsed" CornerRadius="4" Padding="6,1" VerticalAlignment="Center"
+                        Background="{ThemeResource AccentFillColorDefaultBrush}">
+                    <TextBlock Text="PREVIEW" FontSize="10" FontWeight="SemiBold" Foreground="{ThemeResource TextOnAccentFillColorPrimaryBrush}" />
+                </Border>
             </StackPanel>
         </Grid>
-        <Grid x:Name="Workspace" Grid.Row="1" Margin="24,14,24,16" MaxWidth="1100" RowSpacing="10" SizeChanged="ResizeCards">
-            <Grid.RowDefinitions>
-                <RowDefinition Height="Auto" />
-                <RowDefinition Height="Auto" />
-                <RowDefinition Height="*" />
-                <RowDefinition Height="Auto" />
-            </Grid.RowDefinitions>
-            <Grid ColumnSpacing="12" RowSpacing="6">
-                <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-                <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
-                <TextBlock Text="App router" FontSize="26" FontWeight="SemiBold" VerticalAlignment="Center" />
-                <Grid x:Name="HeaderActions" Grid.Column="1" ColumnSpacing="6" RowSpacing="6">
-                    <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-                    <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
-                    <Button x:Name="WindowsRoutingButton" Content="Windows routing" Click="OpenWindowsRouting" />
-                    <Button x:Name="ActivityButton" Grid.Column="1" Content="Activity" Click="OpenActivity" />
-                    <Button x:Name="SettingsButton" Grid.Column="2" Content="Settings" Click="OpenSettings" />
-                    <Button x:Name="AdvancedButton" Grid.Column="3" Content="Advanced tools" Click="OpenAdvancedTools" />
-                </Grid>
-            </Grid>
 
-            <InfoBar x:Name="Notice" Grid.Row="1" IsOpen="False" IsClosable="True" />
-            <Grid x:Name="Cards" Grid.Row="2" ColumnSpacing="12" RowSpacing="10">
-                <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="*" /><ColumnDefinition x:Name="RouteColumn" Width="1.3*" />
-                </Grid.ColumnDefinitions>
+        <NavigationView x:Name="Nav" Grid.Row="1" PaneDisplayMode="Auto" IsBackButtonVisible="Collapsed"
+                        IsSettingsVisible="True" IsPaneToggleButtonVisible="True" OpenPaneLength="132"
+                        CompactModeThresholdWidth="560" ExpandedModeThresholdWidth="960"
+                        SelectionChanged="NavigationChanged">
+            <NavigationView.MenuItems>
+                <NavigationViewItem x:Name="NavHome" Content="Home" Tag="home" IsSelected="True">
+                    <NavigationViewItem.Icon><FontIcon Glyph="&#xE80F;" /></NavigationViewItem.Icon>
+                </NavigationViewItem>
+                <NavigationViewItem x:Name="NavApps" Content="Apps" Tag="apps">
+                    <NavigationViewItem.Icon><FontIcon Glyph="&#xE71D;" /></NavigationViewItem.Icon>
+                </NavigationViewItem>
+                <NavigationViewItem x:Name="NavRoutes" Content="Routes" Tag="routes">
+                    <NavigationViewItem.Icon><FontIcon Glyph="&#xE909;" /></NavigationViewItem.Icon>
+                </NavigationViewItem>
+                <NavigationViewItem x:Name="NavProviders" Content="Providers" Tag="providers">
+                    <NavigationViewItem.Icon><FontIcon Glyph="&#xEA86;" /></NavigationViewItem.Icon>
+                </NavigationViewItem>
+                <NavigationViewItem x:Name="NavNetwork" Content="Network" Tag="network">
+                    <NavigationViewItem.Icon><FontIcon Glyph="&#xE968;" /></NavigationViewItem.Icon>
+                </NavigationViewItem>
+                <NavigationViewItem x:Name="NavActivity" Content="Activity" Tag="activity">
+                    <NavigationViewItem.Icon><FontIcon Glyph="&#xE9D9;" /></NavigationViewItem.Icon>
+                </NavigationViewItem>
+            </NavigationView.MenuItems>
+
+            <Grid x:Name="Workspace">
                 <Grid.RowDefinitions>
-                    <RowDefinition Height="*" /><RowDefinition x:Name="StackedRouteRow" Height="0" />
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="*" />
                 </Grid.RowDefinitions>
 
-                <Border Style="{StaticResource Card}" Padding="16,12">
-                    <Grid RowSpacing="5">
-                        <Grid.RowDefinitions>
-                            <RowDefinition Height="Auto" /><RowDefinition Height="Auto" />
-                            <RowDefinition Height="Auto" /><RowDefinition Height="*" /><RowDefinition Height="Auto" />
-                        </Grid.RowDefinitions>
-                        <Grid ColumnSpacing="6">
-                            <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-                            <TextBlock Text="What to route" Style="{StaticResource SubtitleTextBlockStyle}" VerticalAlignment="Center" />
-                            <Button x:Name="AddAppsButton" Grid.Column="2" Content="Add app">
-                                <Button.Flyout>
-                                    <MenuFlyout>
-                                        <MenuFlyoutItem Text="Choose a running app" Click="PickRunningApp" />
-                                        <MenuFlyoutItem Text="Choose a background process" Click="PickBackgroundApp" />
-                                        <MenuFlyoutItem Text="Browse for an executable…" Click="BrowseForApp" />
-                                        <MenuFlyoutItem x:Name="CatalogCommand" Text="Browse EZConnect game and app catalog…" Click="OpenCatalog" />
-                                    </MenuFlyout>
-                                </Button.Flyout>
-                            </Button>
-                            <Button x:Name="PresetsButton" Grid.Column="1" Content="Presets" Click="OpenPresets" />
-                        </Grid>
-                        <RadioButtons x:Name="Scope" Grid.Row="1" MaxColumns="2" SelectedIndex="0" SelectionChanged="ScopeChanged"
-                                      AutomationProperties.Name="Traffic scope">
-                            <x:String>Selected apps</x:String>
-                            <x:String>Entire PC</x:String>
-                            <x:String>Selected apps only</x:String>
-                        </RadioButtons>
-                        <TextBlock x:Name="AppSummary" Grid.Row="2" Foreground="{StaticResource SubtleText}" TextWrapping="Wrap"
-                                   MaxLines="2" TextTrimming="CharacterEllipsis" />
-                        <ScrollViewer x:Name="AppScroller" Grid.Row="3" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
-                            <StackPanel x:Name="AppRows" Spacing="5" />
-                        </ScrollViewer>
-                        <ScrollViewer x:Name="VerificationScroller" Grid.Row="3" Visibility="Collapsed"
-                                      VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" />
-                        <Border Grid.Row="4" Background="#242437" CornerRadius="12" Padding="12,9">
-                            <StackPanel Spacing="5">
-                                <Grid ColumnSpacing="8">
-                                    <Grid.ColumnDefinitions><ColumnDefinition /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-                                    <TextBlock Text="Live connection" FontWeight="SemiBold" VerticalAlignment="Center" />
-                                    <Polyline x:Name="LatencyTrend" Grid.Column="1" Width="94" Height="20" Stroke="#C3B1FF"
-                                              StrokeThickness="1.8" Visibility="Collapsed"
-                                              ToolTipService.ToolTip="Recent WireSock peer RTT estimates. The scale adjusts to the visible range." />
-                                    <Button x:Name="VerifyRoutingButton" Grid.Column="2" Content="Verify routing" Click="ToggleRoutingVerification" />
-                                </Grid>
-                                <Grid ColumnSpacing="8">
+                <!-- Progress for any running operation, visible from every page. -->
+                <StackPanel x:Name="BusyStrip" Visibility="Collapsed" Spacing="4" Margin="32,12,32,0">
+                    <ProgressBar IsIndeterminate="True" />
+                    <TextBlock Style="{StaticResource Caption}" TextTrimming="CharacterEllipsis">
+                        <Run Text="{Binding Text, ElementName=ConnectionTitle}" />
+                        <Run Text="  " />
+                        <Run Text="{Binding Text, ElementName=ConnectionDetail}" />
+                    </TextBlock>
+                </StackPanel>
+                <InfoBar x:Name="Notice" Grid.Row="1" IsOpen="False" IsClosable="True" Margin="32,12,32,0" />
+
+                <!-- HOME -->
+                <!-- The whole Home layout scales as one piece, so spacing stays equal on every side at any window size. -->
+                <Grid x:Name="HomePage" Grid.Row="2" Padding="24">
+                    <Viewbox x:Name="HomeScale" Stretch="Uniform" StretchDirection="Both" MaxWidth="1180" MaxHeight="900"
+                             HorizontalAlignment="Center" VerticalAlignment="Center">
+                    <StackPanel x:Name="HomeContent" Width="760" Spacing="12">
+                        <Grid x:Name="StatusCard">
+                            <Border Style="{StaticResource Card}" />
+                            <!-- Soft color wash that reflects the connection state. -->
+                            <Border x:Name="StatusGlow" CornerRadius="8" Opacity="0" IsHitTestVisible="False">
+                                <Border.OpacityTransition><ScalarTransition Duration="0:0:0.4" /></Border.OpacityTransition>
+                            </Border>
+                            <Grid Padding="24,18" ColumnSpacing="20" RowSpacing="12">
+                                <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
+
+                                <StackPanel VerticalAlignment="Center" Spacing="6">
+                                    <StackPanel Orientation="Horizontal" Spacing="10">
+                                        <Ellipse x:Name="StatusDot" Width="10" Height="10" VerticalAlignment="Center"
+                                                 Fill="{ThemeResource ControlStrongFillColorDefaultBrush}" />
+                                        <TextBlock x:Name="StatusLabel" Text="NOT CONNECTED" FontSize="12" FontWeight="SemiBold" CharacterSpacing="80"
+                                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}" VerticalAlignment="Center" />
+                                    </StackPanel>
+                                    <TextBlock x:Name="ConnectionTitle" Text="Disconnected" Style="{StaticResource TitleTextBlockStyle}"
+                                               TextTrimming="CharacterEllipsis" AutomationProperties.LiveSetting="Polite" />
+                                    <TextBlock x:Name="ConnectionDetail" Style="{StaticResource Secondary}" MaxLines="2" TextTrimming="CharacterEllipsis" />
+                                    <Button x:Name="ConnectionActionsButton" Margin="-10,4,0,0" Padding="10,6" Click="OpenConnectionOptions"
+                                            Background="Transparent" BorderThickness="0" AutomationProperties.Name="More connection actions">
+                                        <StackPanel Orientation="Horizontal" Spacing="6">
+                                            <TextBlock Text="More actions" Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}" />
+                                            <FontIcon Glyph="&#xE70D;" FontSize="10" Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}" />
+                                        </StackPanel>
+                                        <Button.Flyout>
+                                            <Flyout Placement="BottomEdgeAlignedLeft">
+                                                <StackPanel x:Name="InlineConnectionActions" Spacing="4" MinWidth="220">
+                                                    <Button x:Name="ReconnectInline" Content="Reconnect" Click="ReconnectFromPanel" HorizontalAlignment="Stretch" HorizontalContentAlignment="Left" />
+                                                    <Button x:Name="WatchInline" Content="Watch apps" Click="WatchFromPanel" HorizontalAlignment="Stretch" HorizontalContentAlignment="Left"
+                                                            ToolTipService.ToolTip="Connect automatically when a selected app starts." />
+                                                    <Button x:Name="HoldInline" Content="Hold open" Click="HoldFromPanel" HorizontalAlignment="Stretch" HorizontalContentAlignment="Left" />
+                                                    <Button x:Name="HotspotInline" Content="Hotspot and console" Click="HotspotFromPanel" HorizontalAlignment="Stretch" HorizontalContentAlignment="Left" />
+                                                    <Button x:Name="ProbeInline" Content="Probe a destination" Click="ProbeFromPanel" HorizontalAlignment="Stretch" HorizontalContentAlignment="Left" />
+                                                    <Button x:Name="ResetInline" Content="Reset TCP connections" Click="ResetFromPanel" HorizontalAlignment="Stretch" HorizontalContentAlignment="Left" />
+                                                </StackPanel>
+                                            </Flyout>
+                                        </Button.Flyout>
+                                    </Button>
+                                </StackPanel>
+
+                                <!-- Round connect button inside a state-colored ring. -->
+                                <Border x:Name="ConnectRing" Grid.Column="1" Width="112" Height="112" CornerRadius="56" BorderThickness="3"
+                                        BorderBrush="{ThemeResource ControlStrokeColorDefaultBrush}" VerticalAlignment="Center">
+                                    <Button x:Name="ConnectButton" Content="Connect" Click="ToggleConnection"
+                                            Style="{StaticResource AccentButtonStyle}" Width="92" Height="92" CornerRadius="46" Padding="0"
+                                            HorizontalAlignment="Center" VerticalAlignment="Center" FontSize="13" FontWeight="SemiBold" />
+                                </Border>
+
+                                <Grid x:Name="Metrics" Grid.Row="1" Grid.ColumnSpan="2" ColumnSpacing="10">
                                     <Grid.ColumnDefinitions><ColumnDefinition /><ColumnDefinition /><ColumnDefinition /></Grid.ColumnDefinitions>
-                                    <StackPanel><TextBlock Text="Peer RTT" Foreground="{StaticResource SubtleText}" FontSize="11" /><TextBlock x:Name="LiveRtt" Text="—" FontSize="19" /></StackPanel>
-                                    <StackPanel Grid.Column="1"><TextBlock Text="Est. loss" Foreground="{StaticResource SubtleText}" FontSize="11" /><TextBlock x:Name="LiveLoss" Text="—" FontSize="19" /></StackPanel>
-                                    <StackPanel Grid.Column="2" ToolTipService.ToolTip="Mean change between consecutive WireSock RTT estimates. This is an estimate trend, not packet-level jitter."><TextBlock Text="RTT variation" Foreground="{StaticResource SubtleText}" FontSize="11" /><TextBlock x:Name="LiveVariation" Text="—" FontSize="19" /></StackPanel>
+                                    <Border Style="{StaticResource MetricTile}">
+                                        <StackPanel Spacing="4">
+                                            <TextBlock Text="Latency" Style="{StaticResource Caption}" />
+                                            <Grid ColumnSpacing="10">
+                                                <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                                                <TextBlock x:Name="LiveRtt" Text="—" Style="{StaticResource Metric}" />
+                                                <Polyline x:Name="LatencyTrend" Grid.Column="1" Width="94" Height="20" VerticalAlignment="Center" HorizontalAlignment="Left"
+                                                          Stroke="{ThemeResource AccentFillColorDefaultBrush}" StrokeThickness="2" StrokeLineJoin="Round"
+                                                          Visibility="Collapsed"
+                                                          ToolTipService.ToolTip="Recent WireSock peer RTT estimates. The scale adjusts to the visible range." />
+                                            </Grid>
+                                        </StackPanel>
+                                    </Border>
+                                    <Border Grid.Column="1" Style="{StaticResource MetricTile}">
+                                        <StackPanel Spacing="4">
+                                            <TextBlock Text="Est. loss" Style="{StaticResource Caption}" />
+                                            <TextBlock x:Name="LiveLoss" Text="—" Style="{StaticResource Metric}" />
+                                        </StackPanel>
+                                    </Border>
+                                    <Border Grid.Column="2" Style="{StaticResource MetricTile}"
+                                            ToolTipService.ToolTip="Mean change between consecutive WireSock RTT estimates. This is an estimate trend, not packet-level jitter.">
+                                        <StackPanel Spacing="4">
+                                            <TextBlock Text="RTT variation" Style="{StaticResource Caption}" />
+                                            <TextBlock x:Name="LiveVariation" Text="—" Style="{StaticResource Metric}" />
+                                        </StackPanel>
+                                    </Border>
                                 </Grid>
-                                <TextBlock x:Name="LiveUsage" Text="Connect to see tunnel traffic." Foreground="{StaticResource SubtleText}" TextWrapping="Wrap" MaxLines="2" TextTrimming="CharacterEllipsis" />
-                                <TextBlock x:Name="LivePeer" Foreground="{StaticResource SubtleText}" TextTrimming="CharacterEllipsis" />
-                                <HyperlinkButton x:Name="HealthAlert" Visibility="Collapsed" Click="OpenActivity" Padding="0,2"
-                                                 HorizontalAlignment="Stretch" HorizontalContentAlignment="Left">
-                                    <TextBlock x:Name="HealthMessage" TextWrapping="Wrap" Foreground="#FFC085" />
-                                </HyperlinkButton>
-                                <StackPanel x:Name="InlineConnectionActions" Orientation="Horizontal" Spacing="6" Visibility="Collapsed">
-                                    <Button x:Name="ReconnectInline" Content="Reconnect" Click="ReconnectFromPanel" />
-                                    <Button x:Name="WatchInline" Content="Watch apps" Click="WatchFromPanel" />
-                                    <Button x:Name="HoldInline" Content="Hold open" Click="HoldFromPanel" />
-                                    <Button x:Name="HotspotInline" Content="Hotspot" Click="HotspotFromPanel" />
-                                    <Button x:Name="ProbeInline" Content="Probe" Click="ProbeFromPanel" />
-                                    <Button x:Name="ResetInline" Content="Reset TCP" Click="ResetFromPanel" />
+
+                                <StackPanel Grid.Row="2" Grid.ColumnSpan="2" Spacing="2" Margin="0,-8,0,0">
+                                    <StackPanel Orientation="Horizontal" Spacing="8">
+                                        <FontIcon Glyph="&#xE8AB;" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                        <TextBlock x:Name="LiveUsage" Text="Connect to see tunnel traffic." Style="{StaticResource Secondary}"
+                                                   MaxLines="2" TextTrimming="CharacterEllipsis" />
+                                    </StackPanel>
+                                    <TextBlock x:Name="LivePeer" Style="{StaticResource Caption}" TextTrimming="CharacterEllipsis" Margin="20,0,0,0" />
+                                    <HyperlinkButton x:Name="HealthAlert" Visibility="Collapsed" Click="OpenActivity" Padding="0,6,0,0"
+                                                     HorizontalAlignment="Stretch" HorizontalContentAlignment="Left">
+                                        <StackPanel Orientation="Horizontal" Spacing="8">
+                                            <FontIcon Glyph="&#xE7BA;" FontSize="14" Foreground="{ThemeResource SystemFillColorCautionBrush}" />
+                                            <TextBlock x:Name="HealthMessage" TextWrapping="Wrap" Foreground="{ThemeResource SystemFillColorCautionBrush}" />
+                                        </StackPanel>
+                                    </HyperlinkButton>
+                                </StackPanel>
+                            </Grid>
+                        </Grid>
+
+                        <StackPanel x:Name="SetupPanel" Spacing="10">
+                        <TextBlock Text="Setup" Style="{StaticResource SectionLabel}" Margin="2,2,0,0" />
+                        <Border Style="{StaticResource Card}" Padding="0">
+                            <StackPanel>
+                                <Button Style="{StaticResource RowButton}" Padding="20,8" Click="GoToRoutes" AutomationProperties.Name="Change route">
+                                    <Grid ColumnSpacing="16">
+                                        <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                        <Border Style="{StaticResource IconTile}"><FontIcon Glyph="&#xE909;" Style="{StaticResource TileGlyph}" /></Border>
+                                        <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                                            <TextBlock Text="Route" Style="{StaticResource Caption}" />
+                                            <TextBlock x:Name="HomeRouteTitle" Text="No route selected" Style="{StaticResource BodyStrongTextBlockStyle}" TextTrimming="CharacterEllipsis" />
+                                        </StackPanel>
+                                        <FontIcon Grid.Column="2" Glyph="&#xE76C;" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                    </Grid>
+                                </Button>
+                                <Border Height="1" Background="{ThemeResource DividerStrokeColorDefaultBrush}" Margin="72,0,0,0" />
+                                <Button Style="{StaticResource RowButton}" Padding="20,8" Click="GoToApps" AutomationProperties.Name="Manage apps">
+                                    <Grid ColumnSpacing="16">
+                                        <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                        <Border Style="{StaticResource IconTile}"><FontIcon Glyph="&#xE71D;" Style="{StaticResource TileGlyph}" /></Border>
+                                        <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                                            <TextBlock Text="Apps" Style="{StaticResource Caption}" />
+                                            <TextBlock x:Name="HomeAppsSummary" Style="{StaticResource BodyStrongTextBlockStyle}" TextTrimming="CharacterEllipsis" />
+                                        </StackPanel>
+                                        <FontIcon Grid.Column="2" Glyph="&#xE76C;" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                    </Grid>
+                                </Button>
+                                <Border Height="1" Background="{ThemeResource DividerStrokeColorDefaultBrush}" Margin="72,0,0,0" />
+                                <Grid Padding="20,8" ColumnSpacing="16">
+                                    <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                                    <Border Style="{StaticResource IconTile}" VerticalAlignment="Top"><FontIcon Glyph="&#xE8AB;" Style="{StaticResource TileGlyph}" /></Border>
+                                    <StackPanel Grid.Column="1" Spacing="2">
+                                        <TextBlock Text="What goes through the route" Style="{StaticResource Caption}" />
+                                        <RadioButtons x:Name="Scope" MaxColumns="3" SelectedIndex="0" SelectionChanged="ScopeChanged"
+                                                      AutomationProperties.Name="Traffic scope">
+                                            <x:String>Selected apps</x:String>
+                                            <x:String>Entire PC</x:String>
+                                            <x:String>Selected apps only</x:String>
+                                        </RadioButtons>
+                                        <TextBlock x:Name="ScopeHint" Style="{StaticResource Caption}" TextWrapping="Wrap" />
+                                    </StackPanel>
+                                </Grid>
+                            </StackPanel>
+                        </Border>
+                        </StackPanel>
+                    </StackPanel>
+                    </Viewbox>
+                </Grid>
+
+                <!-- APPS -->
+                <Grid x:Name="AppsPage" Grid.Row="2" Visibility="Collapsed" Margin="32,24,32,24" RowSpacing="12">
+                    <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="*" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
+                    <Grid Style="{StaticResource PageHeader}" ColumnSpacing="8">
+                        <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                        <StackPanel Orientation="Horizontal" Spacing="14" VerticalAlignment="Center">
+                            <Border Style="{StaticResource IconTile}" Width="44" Height="44"><FontIcon Glyph="&#xE71D;" Style="{StaticResource TileGlyph}" FontSize="20" /></Border>
+                            <StackPanel VerticalAlignment="Center">
+                                <TextBlock Text="Apps" Style="{StaticResource PageTitle}" />
+                                <TextBlock Text="Switch apps on or off, and choose how each one connects: through the VPN or straight through an adapter." Style="{StaticResource PageSubtitle}" />
+                            </StackPanel>
+                        </StackPanel>
+                        <Button x:Name="AddAppsButton" Grid.Column="2" Content="Add app" Style="{StaticResource AccentButtonStyle}" VerticalAlignment="Center">
+                            <Button.Flyout>
+                                <MenuFlyout Placement="BottomEdgeAlignedRight">
+                                    <MenuFlyoutItem Text="Choose a running app" Click="PickRunningApp" />
+                                    <MenuFlyoutItem Text="Choose a background process" Click="PickBackgroundApp" />
+                                    <MenuFlyoutItem Text="Browse for an executable…" Click="BrowseForApp" />
+                                    <MenuFlyoutItem x:Name="CatalogCommand" Text="Browse EZConnect game and app catalog…" Click="OpenCatalog" />
+                                </MenuFlyout>
+                            </Button.Flyout>
+                        </Button>
+                    </Grid>
+                    <TextBlock x:Name="AppSummary" Grid.Row="1" Style="{StaticResource Secondary}" MaxLines="2" TextTrimming="CharacterEllipsis"  />
+
+                    <Grid Grid.Row="2" Margin="0,4,0,0">
+                        <ScrollViewer x:Name="AppScroller" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                            <StackPanel x:Name="AppRows" Spacing="6" Padding="0,0,12,0" />
+                        </ScrollViewer>
+                        <StackPanel x:Name="EmptyApps" Spacing="8" Margin="0,40,0,0" HorizontalAlignment="Center" VerticalAlignment="Top" Visibility="Collapsed">
+                            <FontIcon Glyph="&#xE71D;" FontSize="40" Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
+                            <TextBlock Text="No apps yet" Style="{StaticResource SubtitleTextBlockStyle}" HorizontalAlignment="Center" />
+                            <TextBlock Text="Use Add app to pick a running app or browse for its executable." Style="{StaticResource Secondary}"
+                                       HorizontalAlignment="Center" TextAlignment="Center" MaxWidth="340" />
+                        </StackPanel>
+                    </Grid>
+
+                    <!-- Shown only while apps are pinned to an adapter; applies those rules. -->
+                    <Border x:Name="AdapterRulesBar" Grid.Row="3" Style="{StaticResource Card}" Padding="16,12" Visibility="Collapsed">
+                        <Grid ColumnSpacing="14">
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                            <Border Style="{StaticResource IconTile}"><FontIcon Glyph="&#xE968;" Style="{StaticResource TileGlyph}" /></Border>
+                            <StackPanel Grid.Column="1" VerticalAlignment="Center" Spacing="1">
+                                <TextBlock x:Name="WindowsRoutingStatus" Style="{StaticResource BodyStrongTextBlockStyle}" AutomationProperties.LiveSetting="Polite" />
+                                <TextBlock x:Name="WindowsRoutingHint" Style="{StaticResource Caption}" TextWrapping="Wrap" />
+                            </StackPanel>
+                            <Button x:Name="StartWindowsRoutingButton" Grid.Column="2" Content="Save &amp; apply" VerticalAlignment="Center"
+                                    Style="{StaticResource AccentButtonStyle}" Click="ToggleWindowsRouting" />
+                        </Grid>
+                    </Border>
+                </Grid>
+
+                <!-- NETWORK -->
+                <ScrollViewer x:Name="NetworkPage" Grid.Row="2" Visibility="Collapsed" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                    <StackPanel Spacing="12" Margin="32,24,32,32">
+                        <Border Style="{StaticResource PageHeaderBorder}"><StackPanel Orientation="Horizontal" Spacing="14" VerticalAlignment="Center">
+                            <Border Style="{StaticResource IconTile}" Width="44" Height="44"><FontIcon Glyph="&#xE968;" Style="{StaticResource TileGlyph}" FontSize="20" /></Border>
+                            <StackPanel VerticalAlignment="Center">
+                                <TextBlock Text="Network" Style="{StaticResource PageTitle}" />
+                                <TextBlock Text="Your adapters, DNS, and how apps without a rule connect." Style="{StaticResource PageSubtitle}" />
+                            </StackPanel>
+                        </StackPanel></Border>
+
+                        <TextBlock Text="Default adapter" Style="{StaticResource SectionLabel}" Margin="2,12,0,2" />
+                        <Border Style="{StaticResource Card}">
+                            <StackPanel Spacing="10">
+                                <Grid ColumnSpacing="12">
+                                    <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                    <ComboBox x:Name="WindowsFallbackAdapter" Header="Adapter for apps without a rule" HorizontalAlignment="Stretch"
+                                              SelectionChanged="WindowsFallbackChanged" />
+                                    <Button x:Name="RefreshWindowsAdaptersButton" Grid.Column="1" VerticalAlignment="Bottom" Click="RefreshWindowsAdapters"
+                                            AutomationProperties.Name="Refresh adapters" ToolTipService.ToolTip="Refresh adapters">
+                                        <FontIcon Glyph="&#xE72C;" FontSize="14" />
+                                    </Button>
+                                </Grid>
+                                <TextBlock x:Name="WindowsDefaultAdapter" Style="{StaticResource Caption}" TextWrapping="Wrap" />
+                                <TextBlock Text="Choose Follow Windows to leave other apps alone. Apply this on the Apps page." Style="{StaticResource Caption}" TextWrapping="Wrap" />
+                            </StackPanel>
+                        </Border>
+
+                        <TextBlock Text="Interfaces and DNS" Style="{StaticResource SectionLabel}" Margin="2,12,0,2" />
+                        <Border Style="{StaticResource Card}">
+                            <StackPanel Spacing="12">
+                                <ComboBox x:Name="InterfacePicker" Header="Interface" HorizontalAlignment="Stretch" SelectionChanged="InterfaceChanged" />
+                                <Grid x:Name="InterfaceFacts" ColumnSpacing="10" RowSpacing="10">
+                                    <Grid.ColumnDefinitions><ColumnDefinition /><ColumnDefinition /></Grid.ColumnDefinitions>
+                                    <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
+                                    <Border Style="{StaticResource MetricTile}"><StackPanel Spacing="2"><TextBlock Text="Status" Style="{StaticResource Caption}" /><TextBlock x:Name="InterfaceStatus" Style="{StaticResource BodyStrongTextBlockStyle}" TextWrapping="Wrap" /></StackPanel></Border>
+                                    <Border Grid.Column="1" Style="{StaticResource MetricTile}"><StackPanel Spacing="2"><TextBlock Text="Gateway" Style="{StaticResource Caption}" /><TextBlock x:Name="InterfaceGateway" Style="{StaticResource BodyStrongTextBlockStyle}" TextWrapping="Wrap" IsTextSelectionEnabled="True" /></StackPanel></Border>
+                                    <Border Grid.Row="1" Style="{StaticResource MetricTile}"><StackPanel Spacing="2"><TextBlock Text="Addresses" Style="{StaticResource Caption}" /><TextBlock x:Name="InterfaceAddresses" Style="{StaticResource BodyStrongTextBlockStyle}" TextWrapping="Wrap" IsTextSelectionEnabled="True" /></StackPanel></Border>
+                                    <Border Grid.Row="1" Grid.Column="1" Style="{StaticResource MetricTile}"><StackPanel Spacing="2"><TextBlock Text="Current DNS" Style="{StaticResource Caption}" /><TextBlock x:Name="InterfaceDns" Style="{StaticResource BodyStrongTextBlockStyle}" TextWrapping="Wrap" IsTextSelectionEnabled="True" /></StackPanel></Border>
+                                </Grid>
+                                <local:DnsEditor x:Name="DnsInput" />
+                                <StackPanel Orientation="Horizontal" Spacing="8">
+                                    <Button x:Name="ApplyDnsButton" Content="Apply DNS" Style="{StaticResource AccentButtonStyle}" Click="ApplyDnsClicked" />
+                                    <Button x:Name="AutoDnsButton" Content="Use automatic DNS" Click="AutoDnsClicked" />
+                                </StackPanel>
+                                <TextBlock Text="DNS changes are saved by Windows for this interface and stay after RouteFinder closes." Style="{StaticResource Caption}" TextWrapping="Wrap" />
+                            </StackPanel>
+                        </Border>
+
+                        <TextBlock Text="Tools" Style="{StaticResource SectionLabel}" Margin="2,12,0,2" />
+                        <Border Style="{StaticResource Card}" Padding="0">
+                            <StackPanel>
+                                <Button Style="{StaticResource RowButton}" Click="InspectAppRouting" AutomationProperties.Name="Live routing inspector">
+                                    <Grid ColumnSpacing="16">
+                                        <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                        <Border Style="{StaticResource IconTile}"><FontIcon Glyph="&#xE9D9;" Style="{StaticResource TileGlyph}" /></Border>
+                                        <StackPanel Grid.Column="1" VerticalAlignment="Center"><TextBlock Text="Live routing inspector" Style="{StaticResource BodyStrongTextBlockStyle}" /><TextBlock Text="See each app's established connections and the interface they use." Style="{StaticResource Caption}" /></StackPanel>
+                                        <FontIcon Grid.Column="2" Glyph="&#xE76C;" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                    </Grid>
+                                </Button>
+                                <Border Height="1" Background="{ThemeResource DividerStrokeColorDefaultBrush}" Margin="72,0,0,0" />
+                                <Button x:Name="Ipv6Button" Style="{StaticResource RowButton}" Click="ConfigureIpv6Clicked" AutomationProperties.Name="IPv6 adapter bindings">
+                                    <Grid ColumnSpacing="16">
+                                        <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                        <Border Style="{StaticResource IconTile}"><FontIcon Glyph="&#xE968;" Style="{StaticResource TileGlyph}" /></Border>
+                                        <StackPanel Grid.Column="1" VerticalAlignment="Center"><TextBlock Text="IPv6 adapter bindings" Style="{StaticResource BodyStrongTextBlockStyle}" /><TextBlock Text="Turn IPv6 on or off for active Windows adapters." Style="{StaticResource Caption}" /></StackPanel>
+                                        <FontIcon Grid.Column="2" Glyph="&#xE76C;" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                    </Grid>
+                                </Button>
+                            </StackPanel>
+                        </Border>
+                    </StackPanel>
+                </ScrollViewer>
+
+                <!-- PROVIDERS -->
+                <ScrollViewer x:Name="ProvidersPage" Grid.Row="2" Visibility="Collapsed" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                    <StackPanel Spacing="12" Margin="32,24,32,32">
+                        <Border Style="{StaticResource PageHeaderBorder}"><StackPanel Orientation="Horizontal" Spacing="14" VerticalAlignment="Center">
+                            <Border Style="{StaticResource IconTile}" Width="44" Height="44"><FontIcon Glyph="&#xEA86;" Style="{StaticResource TileGlyph}" FontSize="20" /></Border>
+                            <StackPanel VerticalAlignment="Center">
+                                <TextBlock Text="Providers" Style="{StaticResource PageTitle}" />
+                                <TextBlock Text="Providers add routes to RouteFinder. Their routes appear on the Routes page." Style="{StaticResource PageSubtitle}" />
+                            </StackPanel>
+                        </StackPanel></Border>
+
+                        <Border Style="{StaticResource Card}" Margin="0,12,0,0">
+                            <StackPanel Spacing="16">
+                                <Grid ColumnSpacing="14">
+                                    <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                    <Border Style="{StaticResource IconTile}" Width="44" Height="44"><TextBlock Text="EZ" FontWeight="SemiBold" HorizontalAlignment="Center" VerticalAlignment="Center" Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}" /></Border>
+                                    <StackPanel Grid.Column="1" VerticalAlignment="Center" Spacing="2">
+                                        <TextBlock Text="EZConnect" Style="{StaticResource BodyStrongTextBlockStyle}" />
+                                        <TextBlock x:Name="EzStatus" Style="{StaticResource Caption}" TextTrimming="CharacterEllipsis" />
+                                    </StackPanel>
+                                    <Border x:Name="EzBadge" Grid.Column="2" CornerRadius="10" Padding="10,3" VerticalAlignment="Center" Background="{ThemeResource SubtleFillColorSecondaryBrush}">
+                                        <TextBlock x:Name="EzBadgeText" Text="Not signed in" FontSize="12" FontWeight="SemiBold" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                    </Border>
+                                </Grid>
+                                <TextBlock x:Name="EzDetail" Style="{StaticResource Secondary}" />
+                                <StackPanel Orientation="Horizontal" Spacing="8">
+                                    <Button x:Name="EzSignInButton" Content="Sign in" Style="{StaticResource AccentButtonStyle}" Click="ToggleAccount" />
+                                    <Button x:Name="EzRetryButton" Content="Use saved sign-in" Click="RetrySavedSignIn" />
+                                    <Button x:Name="EzRefreshButton" Content="Refresh routes" Click="RefreshProviderRoutes" />
+                                    <Button x:Name="EzCatalogButton" Content="Game catalog" Click="OpenCatalog" />
+                                    <Button x:Name="EzAccountButton" Content="Account" Click="ToggleAccount" />
+                                    <Button x:Name="EzSignOutButton" Content="Sign out" Click="SignOutProvider" />
                                 </StackPanel>
                             </StackPanel>
                         </Border>
-                    </Grid>
-                </Border>
 
-                <Border x:Name="RouteCard" Grid.Column="1" Style="{StaticResource Card}" Padding="16,12">
-                    <Grid RowSpacing="7">
-                        <Grid.RowDefinitions>
-                            <RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" />
-                            <RowDefinition Height="*" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" />
-                        </Grid.RowDefinitions>
-                        <Grid ColumnSpacing="8">
-                            <Grid.ColumnDefinitions><ColumnDefinition /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-                            <TextBlock Text="Where to connect" Style="{StaticResource SubtitleTextBlockStyle}" VerticalAlignment="Center" />
-                            <Button x:Name="AddRouteButton" Grid.Column="1" Content="Add route">
-                                <Button.Flyout>
-                                    <MenuFlyout>
-                                        <MenuFlyoutItem x:Name="ImportRouteCommand" Text="Import WireGuard or Amnezia configuration…" Click="ImportConfig" />
-                                        <MenuFlyoutItem x:Name="AccountCommand" Text="Sign in to EZConnect…" Click="ToggleAccount" />
-                                    </MenuFlyout>
-                                </Button.Flyout>
-                            </Button>
-                        </Grid>
-                        <TextBox x:Name="RouteSearch" Grid.Row="1" PlaceholderText="Search routes, regions, or sources" AutomationProperties.Name="Search routes" />
-                        <Grid x:Name="RouteFilters" Grid.Row="2" ColumnSpacing="6">
-                            <Grid.ColumnDefinitions><ColumnDefinition /><ColumnDefinition /><ColumnDefinition /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-                            <ComboBox x:Name="RouteFilter" HorizontalAlignment="Stretch" AutomationProperties.Name="Route source" />
-                            <ComboBox x:Name="RouteRegion" Grid.Column="1" HorizontalAlignment="Stretch" AutomationProperties.Name="Route region" />
-                            <ComboBox x:Name="RouteSort" Grid.Column="2" HorizontalAlignment="Stretch" AutomationProperties.Name="Sort routes" />
-                            <ToggleButton x:Name="RouteFavorites" Grid.Column="3" Content="☆" AutomationProperties.Name="Favorites only" ToolTipService.ToolTip="Favorites only" />
-                        </Grid>
-                        <ListView x:Name="RouteList" Grid.Row="3" ItemTemplate="{StaticResource RoutePickerRowTemplate}" AutomationProperties.Name="Available routes">
-                            <ListView.ItemContainerStyle>
-                                <Style TargetType="ListViewItem"><Setter Property="HorizontalContentAlignment" Value="Stretch" /></Style>
-                            </ListView.ItemContainerStyle>
-                        </ListView>
-                        <StackPanel x:Name="EmptyRouteLibrary" Grid.Row="3" Spacing="6" Margin="0,12,0,0" Visibility="Collapsed">
-                            <TextBlock Text="No routes yet" FontWeight="SemiBold" />
-                            <TextBlock Text="Use Add route to import a configuration or sign in to a route provider." TextWrapping="Wrap"
-                                       Foreground="{StaticResource SubtleText}" />
+                        <Border Style="{StaticResource Card}">
+                            <StackPanel Spacing="16">
+                                <Grid ColumnSpacing="14">
+                                    <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                    <Border Style="{StaticResource IconTile}" Width="44" Height="44"><FontIcon Glyph="&#xE8E5;" Style="{StaticResource TileGlyph}" /></Border>
+                                    <StackPanel Grid.Column="1" VerticalAlignment="Center" Spacing="2">
+                                        <TextBlock Text="Imported configurations" Style="{StaticResource BodyStrongTextBlockStyle}" />
+                                        <TextBlock Text="WireGuard and Amnezia files you add yourself" Style="{StaticResource Caption}" />
+                                    </StackPanel>
+                                    <Border Grid.Column="2" CornerRadius="10" Padding="10,3" VerticalAlignment="Center" Background="{ThemeResource SubtleFillColorSecondaryBrush}">
+                                        <TextBlock x:Name="ImportedBadgeText" Text="0 routes" FontSize="12" FontWeight="SemiBold" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                    </Border>
+                                </Grid>
+                                <StackPanel Orientation="Horizontal" Spacing="8">
+                                    <Button x:Name="ImportProviderButton" Content="Import configuration…" Style="{StaticResource AccentButtonStyle}" Click="ImportConfig" />
+                                    <Button Content="View routes" Click="GoToRoutes" />
+                                </StackPanel>
+                            </StackPanel>
+                        </Border>
+
+                        <Border Style="{StaticResource Card}" BorderBrush="{ThemeResource ControlStrongStrokeColorDefaultBrush}" BorderThickness="1" Opacity="0.85">
+                            <Grid ColumnSpacing="14">
+                                <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                                <Border Style="{StaticResource IconTile}" Width="44" Height="44"><FontIcon Glyph="&#xE710;" Style="{StaticResource TileGlyph}" /></Border>
+                                <StackPanel Grid.Column="1" VerticalAlignment="Center" Spacing="2">
+                                    <TextBlock Text="More providers" Style="{StaticResource BodyStrongTextBlockStyle}" />
+                                    <TextBlock Text="Plugins for other route services will be added here." Style="{StaticResource Caption}" TextWrapping="Wrap" />
+                                </StackPanel>
+                            </Grid>
+                        </Border>
+                    </StackPanel>
+                </ScrollViewer>
+
+                <!-- ROUTES -->
+                <Grid x:Name="RoutesPage" Grid.Row="2" Visibility="Collapsed" Margin="32,24,32,24" RowSpacing="12">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" /><RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+                    <Grid Style="{StaticResource PageHeader}" ColumnSpacing="8">
+                        <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                        <StackPanel Orientation="Horizontal" Spacing="14" VerticalAlignment="Center">
+                            <Border Style="{StaticResource IconTile}" Width="44" Height="44"><FontIcon Glyph="&#xE909;" Style="{StaticResource TileGlyph}" FontSize="20" /></Border>
+                            <StackPanel VerticalAlignment="Center">
+                                <TextBlock Text="Routes" Style="{StaticResource PageTitle}" />
+                                <TextBlock Text="Pick where your traffic exits. Test routes to compare latency." Style="{StaticResource PageSubtitle}" />
+                            </StackPanel>
                         </StackPanel>
-                        <TextBlock x:Name="RouteListSummary" Grid.Row="4" Foreground="{StaticResource SubtleText}" TextTrimming="CharacterEllipsis" />
-                        <Grid x:Name="InternetAdapterRow" Grid.Row="5" ColumnSpacing="8">
-                            <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
-                            <TextBlock Text="Internet adapter" VerticalAlignment="Center" />
-                            <Button x:Name="InternetAdapterButton" Grid.Column="1" HorizontalAlignment="Stretch" HorizontalContentAlignment="Left"
-                                    Click="OpenInternetAdapter" AutomationProperties.Name="Internet adapter">
+                        <Button x:Name="AddRouteButton" Grid.Column="1" Content="Add route" Style="{StaticResource AccentButtonStyle}" VerticalAlignment="Center">
+                            <Button.Flyout>
+                                <MenuFlyout Placement="BottomEdgeAlignedRight">
+                                    <MenuFlyoutItem x:Name="ImportRouteCommand" Text="Import WireGuard or Amnezia configuration…" Click="ImportConfig" />
+                                    <MenuFlyoutItem x:Name="AccountCommand" Text="Sign in to EZConnect…" Click="ToggleAccount" />
+                                </MenuFlyout>
+                            </Button.Flyout>
+                        </Button>
+                    </Grid>
+                    <TextBox x:Name="RouteSearch" Grid.Row="1" PlaceholderText="Search routes, regions, or sources" AutomationProperties.Name="Search routes" />
+                    <Grid x:Name="RouteFilters" Grid.Row="2" ColumnSpacing="8">
+                        <Grid.ColumnDefinitions><ColumnDefinition /><ColumnDefinition /><ColumnDefinition /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                        <ComboBox x:Name="RouteFilter" HorizontalAlignment="Stretch" AutomationProperties.Name="Route source" />
+                        <ComboBox x:Name="RouteRegion" Grid.Column="1" HorizontalAlignment="Stretch" AutomationProperties.Name="Route region" />
+                        <ComboBox x:Name="RouteSort" Grid.Column="2" HorizontalAlignment="Stretch" AutomationProperties.Name="Sort routes" />
+                        <ToggleButton x:Name="RouteFavorites" Grid.Column="3" Content="☆" AutomationProperties.Name="Favorites only" ToolTipService.ToolTip="Favorites only" />
+                    </Grid>
+                    <Border Grid.Row="3" Style="{StaticResource Card}" Padding="4">
+                        <Grid>
+                            <ListView x:Name="RouteList" ItemTemplate="{StaticResource RoutePickerRowTemplate}" AutomationProperties.Name="Available routes">
+                                <ListView.ItemContainerStyle>
+                                    <Style TargetType="ListViewItem"><Setter Property="HorizontalContentAlignment" Value="Stretch" /></Style>
+                                </ListView.ItemContainerStyle>
+                            </ListView>
+                            <StackPanel x:Name="EmptyRouteLibrary" Spacing="8" Margin="24,48" HorizontalAlignment="Center" Visibility="Collapsed">
+                                <FontIcon Glyph="&#xE909;" FontSize="40" Foreground="{ThemeResource TextFillColorTertiaryBrush}" />
+                                <TextBlock Text="No routes yet" Style="{StaticResource SubtitleTextBlockStyle}" HorizontalAlignment="Center" />
+                                <TextBlock Text="Use Add route to import a configuration or sign in to a route provider." Style="{StaticResource Secondary}"
+                                           HorizontalAlignment="Center" TextAlignment="Center" MaxWidth="340" />
+                            </StackPanel>
+                        </Grid>
+                    </Border>
+                    <Grid Grid.Row="4" ColumnSpacing="12" RowSpacing="8">
+                        <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                        <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
+                        <TextBlock x:Name="RouteListSummary" Grid.ColumnSpan="2" Style="{StaticResource Caption}" TextTrimming="CharacterEllipsis" />
+                        <StackPanel x:Name="InternetAdapterRow" Grid.Row="1" Orientation="Horizontal" Spacing="8">
+                            <TextBlock Text="Internet adapter" Style="{StaticResource Secondary}" VerticalAlignment="Center" />
+                            <Button x:Name="InternetAdapterButton" Click="OpenInternetAdapter" AutomationProperties.Name="Internet adapter" MaxWidth="260">
                                 <TextBlock x:Name="InternetAdapterLabel" Text="Automatic" TextTrimming="CharacterEllipsis" />
                             </Button>
-                        </Grid>
-                        <StackPanel x:Name="RouteTestActions" Grid.Row="6" Orientation="Horizontal" Spacing="6">
+                        </StackPanel>
+                        <StackPanel x:Name="RouteTestActions" Grid.Row="1" Grid.Column="1" Orientation="Horizontal" Spacing="6">
                             <Button x:Name="TestRouteButton" Content="Test route" Click="TestSelectedRoute" />
-                            <Button x:Name="TestAllButton" Content="Test all routes" Click="TestAllRoutes" />
-                            <Button x:Name="RouteToolsButton" AutomationProperties.Name="More route tools"
-                                    ToolTipService.ToolTip="More route tools">
+                            <Button x:Name="TestAllButton" Content="Test all" Click="TestAllRoutes" />
+                            <Button x:Name="RouteToolsButton" AutomationProperties.Name="More route tools" ToolTipService.ToolTip="More route tools">
                                 <FontIcon Glyph="&#xE712;" FontSize="16" />
                                 <Button.Flyout>
-                                    <MenuFlyout>
+                                    <MenuFlyout Placement="TopEdgeAlignedRight">
                                         <MenuFlyoutItem x:Name="TestShortlistButton" Text="Test filtered routes…" Click="TestShortlist" />
                                         <MenuFlyoutItem x:Name="CompareButton" Text="Compare routes" Click="CompareRoutes">
                                             <MenuFlyoutItem.Icon><FontIcon Glyph="&#xE9D9;" /></MenuFlyoutItem.Icon>
@@ -210,68 +637,87 @@
                                         <MenuFlyoutItem x:Name="DestinationButton" Text="Test destination…" Click="TestCustomDestination">
                                             <MenuFlyoutItem.Icon><FontIcon Glyph="&#xE707;" /></MenuFlyoutItem.Icon>
                                         </MenuFlyoutItem>
-                                        <MenuFlyoutItem x:Name="RouteOptionsButton" Text="Route options" Click="OpenRouteOptions">
-                                            <MenuFlyoutItem.Icon><FontIcon Glyph="&#xE713;" /></MenuFlyoutItem.Icon>
+                                        <MenuFlyoutItem x:Name="ClearTestsButton" Text="Clear all saved test results…" Click="ClearTestsClicked">
+                                            <MenuFlyoutItem.Icon><FontIcon Glyph="&#xE74D;" /></MenuFlyoutItem.Icon>
+                                        </MenuFlyoutItem>
+                                        <MenuFlyoutSeparator />
+                                        <MenuFlyoutItem x:Name="RouteOptionsButton" Text="Edit, export, or remove…" Click="OpenRouteOptions">
+                                            <MenuFlyoutItem.Icon><FontIcon Glyph="&#xE70F;" /></MenuFlyoutItem.Icon>
                                         </MenuFlyoutItem>
                                     </MenuFlyout>
                                 </Button.Flyout>
                             </Button>
                         </StackPanel>
                     </Grid>
-                </Border>
-            </Grid>
-
-            <Border x:Name="WindowsRoutingPanel" Grid.Row="2" Grid.RowSpan="2" Style="{StaticResource Card}" Visibility="Collapsed">
-                <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
-                <StackPanel Spacing="12">
-                    <StackPanel Spacing="4">
-                        <TextBlock Text="Windows app routing" Style="{StaticResource SubtitleTextBlockStyle}" />
-                        <TextBlock x:Name="WindowsRoutingStatus" Foreground="{StaticResource AccentText}" AutomationProperties.LiveSetting="Polite" />
-                        <TextBlock x:Name="WindowsDefaultAdapter" Foreground="{StaticResource SubtleText}" TextWrapping="Wrap" />
-                        <ComboBox x:Name="WindowsFallbackAdapter" Header="Default adapter for unassigned apps"
-                                  HorizontalAlignment="Stretch" SelectionChanged="WindowsFallbackChanged" />
-                    </StackPanel>
-                    <StackPanel x:Name="WindowsRoutingTools" Orientation="Horizontal" Spacing="8">
-                        <Button x:Name="BrowseWindowsAppsButton" Content="Browse for apps…" Click="BrowseWindowsApps" />
-                        <Button x:Name="RefreshWindowsAdaptersButton" Content="Refresh adapters" Click="RefreshWindowsAdapters" />
-                    </StackPanel>
-                    <StackPanel Spacing="8">
-                        <Button Content="Routing profiles…" Click="ManageAppRoutingProfiles" />
-                        <Button Content="Live routing inspector…" Click="InspectAppRouting" />
-                        <Button Content="Interfaces and DNS…" Click="ManageInterfaces" />
-                    </StackPanel>
-                    <TextBlock Text="Choose an internet adapter for each app" FontWeight="SemiBold" TextWrapping="Wrap" />
-                    <StackPanel x:Name="WindowsAppRows" Spacing="8" />
-                    <StackPanel Spacing="8">
-                        <TextBlock x:Name="WindowsRoutingHint" Foreground="{StaticResource SubtleText}" TextWrapping="Wrap" />
-                        <StackPanel Orientation="Horizontal" Spacing="8">
-                            <Button x:Name="StartWindowsRoutingButton" Content="Save &amp; apply" Style="{StaticResource AccentButtonStyle}" Click="ToggleWindowsRouting" />
-                        </StackPanel>
-                    </StackPanel>
-                </StackPanel>
-                </ScrollViewer>
-            </Border>
-
-            <Border x:Name="ConnectionBar" Grid.Row="3" Style="{StaticResource Card}" Padding="14,10" Background="#28203D">
-                <Grid ColumnSpacing="8">
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" />
-                    </Grid.ColumnDefinitions>
-                    <StackPanel Spacing="3" VerticalAlignment="Center">
-                        <TextBlock x:Name="ConnectionTitle" Text="Disconnected" FontSize="18" FontWeight="SemiBold"
-                                   TextTrimming="CharacterEllipsis" AutomationProperties.LiveSetting="Polite" />
-                        <TextBlock x:Name="ConnectionDetail" Foreground="{StaticResource SubtleText}" TextWrapping="Wrap"
-                                   MaxLines="2" TextTrimming="CharacterEllipsis" />
-                    </StackPanel>
-                    <Button x:Name="ConnectionActionsButton" Grid.Column="1" Click="OpenConnectionOptions"
-                            AutomationProperties.Name="Connection options" ToolTipService.ToolTip="Connection options">
-                        <FontIcon Glyph="&#xE713;" FontSize="16" />
-                    </Button>
-                    <Button x:Name="ConnectButton" Grid.Column="2" Content="Connect" Click="ToggleConnection"
-                            Style="{StaticResource AccentButtonStyle}" Background="#C3B1FF" Foreground="#201638"
-                            MinWidth="100" Padding="12,8" CornerRadius="9" />
                 </Grid>
-            </Border>
-        </Grid>
+
+                <!-- ACTIVITY -->
+                <Grid x:Name="ActivityPage" Grid.Row="2" Visibility="Collapsed" Margin="32,24,32,24" RowSpacing="12">
+                    <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
+                    <Grid Style="{StaticResource PageHeader}" ColumnSpacing="8">
+                        <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                        <StackPanel Orientation="Horizontal" Spacing="14" VerticalAlignment="Center">
+                            <Border Style="{StaticResource IconTile}" Width="44" Height="44"><FontIcon Glyph="&#xE9D9;" Style="{StaticResource TileGlyph}" FontSize="20" /></Border>
+                            <StackPanel VerticalAlignment="Center">
+                                <TextBlock Text="Activity" Style="{StaticResource PageTitle}" />
+                                <TextBlock Text="Connection events, diagnostics, and routing checks." Style="{StaticResource PageSubtitle}" />
+                            </StackPanel>
+                        </StackPanel>
+                        <Button x:Name="CopyActivityButton" Grid.Column="1" Content="Copy" Click="CopyActivity"  VerticalAlignment="Center"/>
+                        <Button x:Name="SaveReportButton" Grid.Column="2" Content="Save report" Click="SaveReportClicked"  VerticalAlignment="Center"/>
+                        <Button x:Name="DiagnosticsButton" Grid.Column="3" Content="Diagnostics" Style="{StaticResource AccentButtonStyle}" Click="DiagnosticsClicked"  VerticalAlignment="Center"/>
+                    </Grid>
+                    <Border Grid.Row="1" Style="{StaticResource Card}" Padding="4">
+                        <Grid>
+                            <ListView x:Name="ActivityList" SelectionMode="None" AutomationProperties.Name="Activity log">
+                                <ListView.ItemTemplate>
+                                    <DataTemplate>
+                                        <TextBlock Text="{Binding}" TextWrapping="Wrap" IsTextSelectionEnabled="True" Margin="0,6" />
+                                    </DataTemplate>
+                                </ListView.ItemTemplate>
+                            </ListView>
+                            <TextBlock x:Name="EmptyActivity" Text="Connection events will appear here." Style="{StaticResource Secondary}"
+                                       HorizontalAlignment="Center" VerticalAlignment="Center" />
+                        </Grid>
+                    </Border>
+                    <Border Grid.Row="2" Style="{StaticResource Card}" Padding="16,12">
+                        <StackPanel Spacing="10">
+                            <Grid ColumnSpacing="8">
+                                <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                <StackPanel>
+                                    <TextBlock Text="Check per-app routing" Style="{StaticResource BodyStrongTextBlockStyle}" />
+                                    <TextBlock Text="Compare public IPs from two browsers to confirm only the selected app uses the route." Style="{StaticResource Caption}" TextWrapping="Wrap" />
+                                </StackPanel>
+                                <Button x:Name="VerifyRoutingButton" Grid.Column="1" Content="Verify routing" VerticalAlignment="Center" Click="ToggleRoutingVerification" />
+                            </Grid>
+                            <ScrollViewer x:Name="VerificationScroller" Visibility="Collapsed" MaxHeight="360"
+                                          VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" />
+                        </StackPanel>
+                    </Border>
+                </Grid>
+
+                <!-- SETTINGS -->
+                <Grid x:Name="SettingsPage" Grid.Row="2" Visibility="Collapsed">
+                    <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /></Grid.RowDefinitions>
+                    <Grid Style="{StaticResource PageHeader}" Margin="32,24,32,8" ColumnSpacing="8">
+                        <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                        <StackPanel Orientation="Horizontal" Spacing="14" VerticalAlignment="Center">
+                            <Border Style="{StaticResource IconTile}" Width="44" Height="44"><FontIcon Glyph="&#xE713;" Style="{StaticResource TileGlyph}" FontSize="20" /></Border>
+                            <StackPanel VerticalAlignment="Center">
+                                <TextBlock Text="Settings" Style="{StaticResource PageTitle}" />
+                                <TextBlock Text="Connection, network, and app preferences." Style="{StaticResource PageSubtitle}" />
+                            </StackPanel>
+                        </StackPanel>
+                        <Button x:Name="SettingsResetButton" Grid.Column="1" Content="Discard changes" Click="DiscardSettings"  VerticalAlignment="Center"/>
+                        <Button x:Name="SettingsSaveButton" Grid.Column="2" Content="Save" Style="{StaticResource AccentButtonStyle}" Click="SaveSettingsClicked"  VerticalAlignment="Center"/>
+                    </Grid>
+                    <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                        <ContentControl x:Name="SettingsGate" IsTabStop="False" HorizontalContentAlignment="Stretch" HorizontalAlignment="Stretch">
+                            <StackPanel x:Name="SettingsHost" Spacing="4" Margin="32,8,32,32" />
+                        </ContentControl>
+                    </ScrollViewer>
+                </Grid>
+            </Grid>
+        </NavigationView>
     </Grid>
 </Window>

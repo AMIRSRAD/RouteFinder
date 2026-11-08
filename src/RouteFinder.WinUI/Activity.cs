@@ -10,27 +10,23 @@ namespace RouteFinder.WinUI;
 
 public sealed partial class MainWindow
 {
-    async void OpenActivity(object sender, RoutedEventArgs args)
+    async void DiagnosticsClicked(object sender, RoutedEventArgs args)
     {
-        var log = new TextBox
-        {
-            Text = activity.Count == 0 ? "Connection events will appear here." : string.Join("\n\n", activity),
-            IsReadOnly = true, TextWrapping = TextWrapping.Wrap, AcceptsReturn = true, MinHeight = 170, MaxHeight = 320
-        };
-        var dialog = MakeDialog("Activity", log, "Diagnostics");
-        dialog.SecondaryButtonText = "Save report";
-        dialog.CloseButtonText = "Close";
-        dialog.IsPrimaryButtonEnabled = !busy;
-        dialog.IsSecondaryButtonEnabled = !preview;
-        switch (await dialog.ShowAsync())
-        {
-            case ContentDialogResult.Primary:
-                await ShowDiagnostics();
-                break;
-            case ContentDialogResult.Secondary:
-                await SaveReport();
-                break;
-        }
+        if (!busy) await ShowDiagnostics();
+    }
+
+    async void SaveReportClicked(object sender, RoutedEventArgs args)
+    {
+        if (!preview) await SaveReport();
+    }
+
+    void CopyActivity(object sender, RoutedEventArgs args)
+    {
+        if (activity.Count == 0) return;
+        var data = new Windows.ApplicationModel.DataTransfer.DataPackage();
+        data.SetText(string.Join(Environment.NewLine, activity));
+        Windows.ApplicationModel.DataTransfer.Clipboard.SetContent(data);
+        Report("Copied the activity log.", InfoBarSeverity.Success);
     }
 
     async Task ShowDiagnostics()
@@ -134,7 +130,7 @@ public sealed partial class MainWindow
         yield return $"WireSock SDK {sdkVersion}";
         yield return $"Route source: {route?.Source ?? "None"}";
         yield return $"Tunnel {(session.HasTunnel ? "running" : "stopped")} · Cleanup pending {session.NeedsCleanup && !session.HasTunnel}";
-        yield return $"Selected apps: {checkedApps.Count}";
+        yield return $"Apps through VPN: {VpnApps().Count()} of {apps.Count}";
         if (session.HasTunnel)
         {
             yield return $"Mode {(connectedForConsole ? "Console" : Scope.SelectedIndex == 1 ? "Entire PC" : BlocksOtherApps ? "Selected apps only" : "Selected apps")} · Backend {(connectedForConsole || preferences.PortableEngine ? "virtual adapter" : "transparent")}";

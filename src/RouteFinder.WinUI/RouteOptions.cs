@@ -20,7 +20,7 @@ public sealed partial class MainWindow
         if (!preview && selected.Profile is { } profile)
         {
             actions.Add(("Edit configuration", () => EditConfig(profile)));
-            Add("Save selected apps to this profile", () => ReplaceProfile(profile, profile.Configuration, apps.Where(checkedApps.Contains).ToList()));
+            Add("Save selected apps to this profile", () => ReplaceProfile(profile, profile.Configuration, VpnApps().ToList()));
             Add("Load the profile's saved apps", () => LoadProfileApps(profile));
             if (profile.Applications is { Count: > 0 }) actions.Add(("Connect with saved apps", async () =>
             {
@@ -181,8 +181,19 @@ public sealed partial class MainWindow
     {
         var existing = apps.ToHashSet(StringComparer.OrdinalIgnoreCase);
         apps.AddRange(saved.Where(existing.Add));
-        checkedApps.Clear();
-        checkedApps.UnionWith(saved);
+        // The route lists these apps, so they go through the VPN. Other VPN apps switch off;
+        // apps pinned to an adapter keep their own state.
+        var listed = new HashSet<string>(saved, StringComparer.OrdinalIgnoreCase);
+        foreach (string path in apps)
+        {
+            if (listed.Contains(path))
+            {
+                checkedApps.Add(path);
+                if (windowsAppDraft is { } draft && draft.ContainsKey(path)) draft[path] = "";
+                appVpnDraft.Remove(path);
+            }
+            else if (!IsAdapterApp(path)) checkedApps.Remove(path);
+        }
     }
 
     async Task ExportConfig(SavedProfile profile)
