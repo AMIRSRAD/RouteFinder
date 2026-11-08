@@ -8,68 +8,103 @@
     </Window.SystemBackdrop>
     <Grid x:Name="Root">
         <Grid.Resources>
-            <!-- Cards and rows follow the Windows light/dark theme through Fluent theme brushes. -->
+            <ResourceDictionary>
+            <!-- Brand accent brushes and gradient buttons. Set here (not in App.xaml) so control templates pick them up. -->
+            <ResourceDictionary.ThemeDictionaries>
+                <ResourceDictionary x:Key="Default">
+                        <SolidColorBrush x:Key="AccentFillColorDefaultBrush" Color="#FF7C66F5" />
+                        <SolidColorBrush x:Key="AccentFillColorSecondaryBrush" Color="#E67C66F5" />
+                        <SolidColorBrush x:Key="AccentFillColorTertiaryBrush" Color="#CC7C66F5" />
+                        <SolidColorBrush x:Key="AccentTextFillColorPrimaryBrush" Color="#FFC4BAFF" />
+                        <SolidColorBrush x:Key="AccentTextFillColorSecondaryBrush" Color="#FFC4BAFF" />
+                        <SolidColorBrush x:Key="AccentTextFillColorTertiaryBrush" Color="#FFA798FF" />
+                        <SolidColorBrush x:Key="TextOnAccentFillColorPrimaryBrush" Color="#FFFFFFFF" />
+                        <SolidColorBrush x:Key="TextOnAccentFillColorSecondaryBrush" Color="#B3FFFFFF" />
+                        <LinearGradientBrush x:Key="AccentButtonBackground" StartPoint="0,0" EndPoint="1,1">
+                                <GradientStop Color="#FF8466FF" Offset="0" />
+                                <GradientStop Color="#FF4F7DFF" Offset="1" />
+                            </LinearGradientBrush>
+                        <LinearGradientBrush x:Key="AccentButtonBackgroundPointerOver" StartPoint="0,0" EndPoint="1,1">
+                                <GradientStop Color="#FF9478FF" Offset="0" />
+                                <GradientStop Color="#FF6690FF" Offset="1" />
+                            </LinearGradientBrush>
+                        <LinearGradientBrush x:Key="AccentButtonBackgroundPressed" StartPoint="0,0" EndPoint="1,1">
+                                <GradientStop Color="#FF6A52EC" Offset="0" />
+                                <GradientStop Color="#FF3F68E0" Offset="1" />
+                            </LinearGradientBrush>
+                        <SolidColorBrush x:Key="AccentButtonForeground" Color="#FFFFFFFF" />
+                        <SolidColorBrush x:Key="AccentButtonForegroundPointerOver" Color="#FFFFFFFF" />
+                        <SolidColorBrush x:Key="AccentButtonForegroundPressed" Color="#E6FFFFFF" />
+                        <SolidColorBrush x:Key="AccentButtonBorderBrush" Color="#33FFFFFF" />
+                        <SolidColorBrush x:Key="AccentButtonBorderBrushPointerOver" Color="#4DFFFFFF" />
+                        <SolidColorBrush x:Key="AccentButtonBorderBrushPressed" Color="#1AFFFFFF" />
+                </ResourceDictionary>
+                <ResourceDictionary x:Key="Light">
+                        <SolidColorBrush x:Key="AccentFillColorDefaultBrush" Color="#FF5B44D6" />
+                        <SolidColorBrush x:Key="AccentFillColorSecondaryBrush" Color="#E65B44D6" />
+                        <SolidColorBrush x:Key="AccentFillColorTertiaryBrush" Color="#CC5B44D6" />
+                        <SolidColorBrush x:Key="AccentTextFillColorPrimaryBrush" Color="#FF4532B0" />
+                        <SolidColorBrush x:Key="AccentTextFillColorSecondaryBrush" Color="#FF3A2C96" />
+                        <SolidColorBrush x:Key="AccentTextFillColorTertiaryBrush" Color="#FF5B44D6" />
+                        <SolidColorBrush x:Key="TextOnAccentFillColorPrimaryBrush" Color="#FFFFFFFF" />
+                        <SolidColorBrush x:Key="TextOnAccentFillColorSecondaryBrush" Color="#B3FFFFFF" />
+                        <LinearGradientBrush x:Key="AccentButtonBackground" StartPoint="0,0" EndPoint="1,1">
+                                <GradientStop Color="#FF6B4FF0" Offset="0" />
+                                <GradientStop Color="#FF3D6BF0" Offset="1" />
+                            </LinearGradientBrush>
+                        <LinearGradientBrush x:Key="AccentButtonBackgroundPointerOver" StartPoint="0,0" EndPoint="1,1">
+                                <GradientStop Color="#FF7C62FA" Offset="0" />
+                                <GradientStop Color="#FF527DF7" Offset="1" />
+                            </LinearGradientBrush>
+                        <LinearGradientBrush x:Key="AccentButtonBackgroundPressed" StartPoint="0,0" EndPoint="1,1">
+                                <GradientStop Color="#FF5740D2" Offset="0" />
+                                <GradientStop Color="#FF325CD6" Offset="1" />
+                            </LinearGradientBrush>
+                        <SolidColorBrush x:Key="AccentButtonForeground" Color="#FFFFFFFF" />
+                        <SolidColorBrush x:Key="AccentButtonForegroundPointerOver" Color="#FFFFFFFF" />
+                        <SolidColorBrush x:Key="AccentButtonForegroundPressed" Color="#E6FFFFFF" />
+                        <SolidColorBrush x:Key="AccentButtonBorderBrush" Color="#26000000" />
+                        <SolidColorBrush x:Key="AccentButtonBorderBrushPointerOver" Color="#33000000" />
+                        <SolidColorBrush x:Key="AccentButtonBorderBrushPressed" Color="#1A000000" />
+                </ResourceDictionary>
+            </ResourceDictionary.ThemeDictionaries>
+            <!-- Shared look. Brand brushes (BrandCardFill, BrandTileFill, BrandBanner...) live in App.xaml per theme. -->
             <Style x:Key="Card" TargetType="Border">
-                <Setter Property="Background">
-                    <Setter.Value>
-                        <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
-                            <GradientStop Color="{ThemeResource CardBackgroundFillColorSecondary}" Offset="0" />
-                            <GradientStop Color="{ThemeResource CardBackgroundFillColorDefault}" Offset="1" />
-                        </LinearGradientBrush>
-                    </Setter.Value>
-                </Setter>
-                <Setter Property="BorderBrush" Value="{ThemeResource CardStrokeColorDefaultBrush}" />
+                <Setter Property="Background" Value="{ThemeResource BrandCardFill}" />
+                <Setter Property="BorderBrush" Value="{ThemeResource BrandCardEdge}" />
                 <Setter Property="BorderThickness" Value="1" />
-                <Setter Property="CornerRadius" Value="8" />
+                <Setter Property="CornerRadius" Value="10" />
                 <Setter Property="Padding" Value="20" />
             </Style>
             <Style x:Key="AppRow" TargetType="Grid">
-                <Setter Property="Background">
-                    <Setter.Value>
-                        <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
-                            <GradientStop Color="{ThemeResource CardBackgroundFillColorSecondary}" Offset="0" />
-                            <GradientStop Color="{ThemeResource CardBackgroundFillColorDefault}" Offset="1" />
-                        </LinearGradientBrush>
-                    </Setter.Value>
-                </Setter>
-                <Setter Property="BorderBrush" Value="{ThemeResource CardStrokeColorDefaultBrush}" />
+                <Setter Property="Background" Value="{ThemeResource BrandCardFill}" />
+                <Setter Property="BorderBrush" Value="{ThemeResource BrandCardEdge}" />
                 <Setter Property="BorderThickness" Value="1" />
-                <Setter Property="CornerRadius" Value="8" />
+                <Setter Property="CornerRadius" Value="10" />
                 <Setter Property="MinHeight" Value="52" />
             </Style>
             <Style x:Key="PageHeader" TargetType="Grid">
-                <Setter Property="Background">
-                    <Setter.Value>
-                        <LinearGradientBrush StartPoint="0,0" EndPoint="1,1" Opacity="0.2">
-                            <GradientStop Color="{ThemeResource SystemAccentColor}" Offset="0" />
-                            <GradientStop Color="Transparent" Offset="0.85" />
-                        </LinearGradientBrush>
-                    </Setter.Value>
-                </Setter>
-                <Setter Property="CornerRadius" Value="8" />
-                <Setter Property="Padding" Value="20,14" />
+                <Setter Property="Background" Value="{ThemeResource BrandBanner}" />
+                <Setter Property="CornerRadius" Value="12" />
+                <Setter Property="Padding" Value="20,16" />
                 <Setter Property="BorderThickness" Value="1" />
-                <Setter Property="BorderBrush" Value="{ThemeResource CardStrokeColorDefaultBrush}" />
+                <Setter Property="BorderBrush" Value="{ThemeResource BrandCardEdge}" />
             </Style>
             <Style x:Key="PageHeaderBorder" TargetType="Border">
-                <Setter Property="Background">
-                    <Setter.Value>
-                        <LinearGradientBrush StartPoint="0,0" EndPoint="1,1" Opacity="0.2">
-                            <GradientStop Color="{ThemeResource SystemAccentColor}" Offset="0" />
-                            <GradientStop Color="Transparent" Offset="0.85" />
-                        </LinearGradientBrush>
-                    </Setter.Value>
-                </Setter>
-                <Setter Property="CornerRadius" Value="8" />
-                <Setter Property="Padding" Value="20,14" />
+                <Setter Property="Background" Value="{ThemeResource BrandBanner}" />
+                <Setter Property="CornerRadius" Value="12" />
+                <Setter Property="Padding" Value="20,16" />
                 <Setter Property="BorderThickness" Value="1" />
-                <Setter Property="BorderBrush" Value="{ThemeResource CardStrokeColorDefaultBrush}" />
+                <Setter Property="BorderBrush" Value="{ThemeResource BrandCardEdge}" />
             </Style>
             <Style x:Key="PageTitle" TargetType="TextBlock" BasedOn="{StaticResource TitleTextBlockStyle}">
                 <Setter Property="VerticalAlignment" Value="Center" />
+                <Setter Property="Foreground" Value="{ThemeResource BrandTitleText}" />
             </Style>
             <Style x:Key="SectionLabel" TargetType="TextBlock" BasedOn="{StaticResource BodyStrongTextBlockStyle}">
                 <Setter Property="Margin" Value="2,8,0,2" />
+                <Setter Property="Foreground" Value="{ThemeResource AccentTextFillColorPrimaryBrush}" />
+                <Setter Property="CharacterSpacing" Value="40" />
             </Style>
             <Style x:Key="Secondary" TargetType="TextBlock" BasedOn="{StaticResource BodyTextBlockStyle}">
                 <Setter Property="Foreground" Value="{ThemeResource TextFillColorSecondaryBrush}" />
@@ -78,26 +113,28 @@
             <Style x:Key="Caption" TargetType="TextBlock" BasedOn="{StaticResource CaptionTextBlockStyle}">
                 <Setter Property="Foreground" Value="{ThemeResource TextFillColorSecondaryBrush}" />
             </Style>
-            <Style x:Key="Metric" TargetType="TextBlock" BasedOn="{StaticResource SubtitleTextBlockStyle}" />
+            <Style x:Key="Metric" TargetType="TextBlock" BasedOn="{StaticResource SubtitleTextBlockStyle}">
+                <Setter Property="Foreground" Value="{ThemeResource BrandTitleText}" />
+            </Style>
             <local:ToneBrushConverter x:Key="ToneBrush" />
             <!-- Rounded square behind an icon or badge, used by every list row. -->
             <Style x:Key="IconTile" TargetType="Border">
                 <Setter Property="Width" Value="36" />
                 <Setter Property="Height" Value="36" />
-                <Setter Property="CornerRadius" Value="8" />
-                <Setter Property="Background">
-                    <Setter.Value><SolidColorBrush Color="{ThemeResource SystemAccentColor}" Opacity="0.16" /></Setter.Value>
-                </Setter>
+                <Setter Property="CornerRadius" Value="9" />
+                <Setter Property="Background" Value="{ThemeResource BrandTileFill}" />
+                <Setter Property="BorderBrush" Value="{ThemeResource BrandCardEdge}" />
+                <Setter Property="BorderThickness" Value="1" />
                 <Setter Property="VerticalAlignment" Value="Center" />
             </Style>
             <Style x:Key="IconTileGrid" TargetType="Grid">
                 <Setter Property="Width" Value="36" />
                 <Setter Property="Height" Value="36" />
-                <Setter Property="CornerRadius" Value="8" />
+                <Setter Property="CornerRadius" Value="9" />
                 <Setter Property="Padding" Value="6" />
-                <Setter Property="Background">
-                    <Setter.Value><SolidColorBrush Color="{ThemeResource SystemAccentColor}" Opacity="0.16" /></Setter.Value>
-                </Setter>
+                <Setter Property="Background" Value="{ThemeResource BrandTileFill}" />
+                <Setter Property="BorderBrush" Value="{ThemeResource BrandCardEdge}" />
+                <Setter Property="BorderThickness" Value="1" />
                 <Setter Property="VerticalAlignment" Value="Center" />
             </Style>
             <Style x:Key="TileGlyph" TargetType="FontIcon">
@@ -106,9 +143,27 @@
                 <Setter Property="HorizontalAlignment" Value="Center" />
                 <Setter Property="VerticalAlignment" Value="Center" />
             </Style>
+            <!-- Solid brand tile with a white glyph, for page banners and provider cards. -->
+            <Style x:Key="HeroTile" TargetType="Border">
+                <Setter Property="Width" Value="44" />
+                <Setter Property="Height" Value="44" />
+                <Setter Property="CornerRadius" Value="12" />
+                <Setter Property="Background" Value="{StaticResource BrandSolid}" />
+                <Setter Property="BorderBrush" Value="#33FFFFFF" />
+                <Setter Property="BorderThickness" Value="1" />
+                <Setter Property="VerticalAlignment" Value="Center" />
+            </Style>
+            <Style x:Key="HeroGlyph" TargetType="FontIcon">
+                <Setter Property="FontSize" Value="20" />
+                <Setter Property="Foreground" Value="White" />
+                <Setter Property="HorizontalAlignment" Value="Center" />
+                <Setter Property="VerticalAlignment" Value="Center" />
+            </Style>
             <Style x:Key="MetricTile" TargetType="Border">
-                <Setter Property="Background" Value="{ThemeResource SubtleFillColorSecondaryBrush}" />
-                <Setter Property="CornerRadius" Value="8" />
+                <Setter Property="Background" Value="{ThemeResource BrandTileFill}" />
+                <Setter Property="BorderBrush" Value="{ThemeResource BrandCardEdge}" />
+                <Setter Property="BorderThickness" Value="1" />
+                <Setter Property="CornerRadius" Value="10" />
                 <Setter Property="Padding" Value="14,8" />
             </Style>
             <!-- A full-width row that behaves like a link: hover highlight, chevron on the right. -->
@@ -149,6 +204,7 @@
                     </StackPanel>
                 </Grid>
             </DataTemplate>
+            </ResourceDictionary>
         </Grid.Resources>
         <Grid.RowDefinitions>
             <RowDefinition Height="48" />
@@ -161,10 +217,10 @@
                 <Viewbox Width="20" Height="20">
                     <Canvas Width="256" Height="256">
                         <Rectangle Canvas.Left="7" Canvas.Top="7" Width="242" Height="242" RadiusX="57" RadiusY="57"
-                                   Fill="{ThemeResource AccentFillColorDefaultBrush}" />
-                        <Path Data="M 57,169 L 113,104 L 155,142 L 199,78" Stroke="{ThemeResource TextOnAccentFillColorPrimaryBrush}" StrokeThickness="18" />
-                        <Ellipse Canvas.Left="45" Canvas.Top="157" Width="24" Height="24" Fill="{ThemeResource TextOnAccentFillColorPrimaryBrush}" />
-                        <Ellipse Canvas.Left="187" Canvas.Top="66" Width="24" Height="24" Fill="{ThemeResource TextOnAccentFillColorPrimaryBrush}" />
+                                   Fill="{StaticResource BrandSolid}" />
+                        <Path Data="M 57,169 L 113,104 L 155,142 L 199,78" Stroke="White" StrokeThickness="18" />
+                        <Ellipse Canvas.Left="45" Canvas.Top="157" Width="24" Height="24" Fill="White" />
+                        <Ellipse Canvas.Left="187" Canvas.Top="66" Width="24" Height="24" Fill="White" />
                     </Canvas>
                 </Viewbox>
                 <TextBlock Text="RouteFinder" Style="{StaticResource CaptionTextBlockStyle}" VerticalAlignment="Center" />
@@ -206,6 +262,24 @@
                     <RowDefinition Height="Auto" />
                     <RowDefinition Height="*" />
                 </Grid.RowDefinitions>
+                <Grid Grid.RowSpan="3" IsHitTestVisible="False">
+                    <Rectangle>
+                        <Rectangle.Fill>
+                            <RadialGradientBrush Center="1,0" GradientOrigin="1,0" RadiusX="0.75" RadiusY="0.9">
+                                <GradientStop Color="{ThemeResource BrandGlowViolet}" Offset="0" />
+                                <GradientStop Color="Transparent" Offset="1" />
+                            </RadialGradientBrush>
+                        </Rectangle.Fill>
+                    </Rectangle>
+                    <Rectangle>
+                        <Rectangle.Fill>
+                            <RadialGradientBrush Center="0,1" GradientOrigin="0,1" RadiusX="0.7" RadiusY="0.8">
+                                <GradientStop Color="{ThemeResource BrandGlowCyan}" Offset="0" />
+                                <GradientStop Color="Transparent" Offset="1" />
+                            </RadialGradientBrush>
+                        </Rectangle.Fill>
+                    </Rectangle>
+                </Grid>
 
                 <!-- Progress for any running operation, visible from every page. -->
                 <StackPanel x:Name="BusyStrip" Visibility="Collapsed" Spacing="4" Margin="32,12,32,0">
@@ -226,8 +300,24 @@
                     <StackPanel x:Name="HomeContent" Width="760" Spacing="12">
                         <Grid x:Name="StatusCard">
                             <Border Style="{StaticResource Card}" />
+                            <Rectangle RadiusX="10" RadiusY="10" IsHitTestVisible="False">
+                                <Rectangle.Fill>
+                                    <RadialGradientBrush Center="0.92,0.08" GradientOrigin="0.92,0.08" RadiusX="0.65" RadiusY="0.95">
+                                        <GradientStop Color="{ThemeResource BrandGlowViolet}" Offset="0" />
+                                        <GradientStop Color="Transparent" Offset="1" />
+                                    </RadialGradientBrush>
+                                </Rectangle.Fill>
+                            </Rectangle>
+                            <Rectangle RadiusX="10" RadiusY="10" IsHitTestVisible="False">
+                                <Rectangle.Fill>
+                                    <RadialGradientBrush Center="0.04,1" GradientOrigin="0.04,1" RadiusX="0.55" RadiusY="0.8">
+                                        <GradientStop Color="{ThemeResource BrandGlowCyan}" Offset="0" />
+                                        <GradientStop Color="Transparent" Offset="1" />
+                                    </RadialGradientBrush>
+                                </Rectangle.Fill>
+                            </Rectangle>
                             <!-- Soft color wash that reflects the connection state. -->
-                            <Border x:Name="StatusGlow" CornerRadius="8" Opacity="0" IsHitTestVisible="False">
+                            <Border x:Name="StatusGlow" CornerRadius="10" Opacity="0" IsHitTestVisible="False">
                                 <Border.OpacityTransition><ScalarTransition Duration="0:0:0.4" /></Border.OpacityTransition>
                             </Border>
                             <Grid Padding="24,18" ColumnSpacing="20" RowSpacing="12">
@@ -241,7 +331,7 @@
                                         <TextBlock x:Name="StatusLabel" Text="NOT CONNECTED" FontSize="12" FontWeight="SemiBold" CharacterSpacing="80"
                                                    Foreground="{ThemeResource TextFillColorSecondaryBrush}" VerticalAlignment="Center" />
                                     </StackPanel>
-                                    <TextBlock x:Name="ConnectionTitle" Text="Disconnected" Style="{StaticResource TitleTextBlockStyle}"
+                                    <TextBlock x:Name="ConnectionTitle" Text="Disconnected" Style="{StaticResource TitleTextBlockStyle}" Foreground="{ThemeResource BrandTitleText}"
                                                TextTrimming="CharacterEllipsis" AutomationProperties.LiveSetting="Polite" />
                                     <TextBlock x:Name="ConnectionDetail" Style="{StaticResource Secondary}" MaxLines="2" TextTrimming="CharacterEllipsis" />
                                     <Button x:Name="ConnectionActionsButton" Margin="-10,4,0,0" Padding="10,6" Click="OpenConnectionOptions"
@@ -267,12 +357,22 @@
                                 </StackPanel>
 
                                 <!-- Round connect button inside a state-colored ring. -->
-                                <Border x:Name="ConnectRing" Grid.Column="1" Width="112" Height="112" CornerRadius="56" BorderThickness="3"
-                                        BorderBrush="{ThemeResource ControlStrokeColorDefaultBrush}" VerticalAlignment="Center">
+                                <Grid Grid.Column="1" VerticalAlignment="Center">
+                                    <Ellipse Width="156" Height="156" Margin="-22" IsHitTestVisible="False">
+                                        <Ellipse.Fill>
+                                            <RadialGradientBrush>
+                                                <GradientStop Color="{ThemeResource BrandGlowViolet}" Offset="0.5" />
+                                                <GradientStop Color="Transparent" Offset="1" />
+                                            </RadialGradientBrush>
+                                        </Ellipse.Fill>
+                                    </Ellipse>
+                                    <Border x:Name="ConnectRing" Width="112" Height="112" CornerRadius="56" BorderThickness="3"
+                                        BorderBrush="{StaticResource BrandRing}">
                                     <Button x:Name="ConnectButton" Content="Connect" Click="ToggleConnection"
                                             Style="{StaticResource AccentButtonStyle}" Width="92" Height="92" CornerRadius="46" Padding="0"
                                             HorizontalAlignment="Center" VerticalAlignment="Center" FontSize="13" FontWeight="SemiBold" />
                                 </Border>
+                                </Grid>
 
                                 <Grid x:Name="Metrics" Grid.Row="1" Grid.ColumnSpan="2" ColumnSpacing="10">
                                     <Grid.ColumnDefinitions><ColumnDefinition /><ColumnDefinition /><ColumnDefinition /></Grid.ColumnDefinitions>
@@ -377,7 +477,7 @@
                     <Grid Style="{StaticResource PageHeader}" ColumnSpacing="8">
                         <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
                         <StackPanel Orientation="Horizontal" Spacing="14" VerticalAlignment="Center">
-                            <Border Style="{StaticResource IconTile}" Width="44" Height="44"><FontIcon Glyph="&#xE71D;" Style="{StaticResource TileGlyph}" FontSize="20" /></Border>
+                            <Border Style="{StaticResource HeroTile}"><FontIcon Glyph="&#xE71D;" Style="{StaticResource HeroGlyph}" /></Border>
                             <StackPanel VerticalAlignment="Center">
                                 <TextBlock Text="Apps" Style="{StaticResource PageTitle}" />
                                 <TextBlock Text="Switch apps on or off, and choose how each one connects: through the VPN or straight through an adapter." Style="{StaticResource PageSubtitle}" />
@@ -427,7 +527,7 @@
                 <ScrollViewer x:Name="NetworkPage" Grid.Row="2" Visibility="Collapsed" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
                     <StackPanel Spacing="12" Margin="32,24,32,32">
                         <Border Style="{StaticResource PageHeaderBorder}"><StackPanel Orientation="Horizontal" Spacing="14" VerticalAlignment="Center">
-                            <Border Style="{StaticResource IconTile}" Width="44" Height="44"><FontIcon Glyph="&#xE968;" Style="{StaticResource TileGlyph}" FontSize="20" /></Border>
+                            <Border Style="{StaticResource HeroTile}"><FontIcon Glyph="&#xE968;" Style="{StaticResource HeroGlyph}" /></Border>
                             <StackPanel VerticalAlignment="Center">
                                 <TextBlock Text="Network" Style="{StaticResource PageTitle}" />
                                 <TextBlock Text="Your adapters, DNS, and how apps without a rule connect." Style="{StaticResource PageSubtitle}" />
@@ -501,7 +601,7 @@
                 <ScrollViewer x:Name="ProvidersPage" Grid.Row="2" Visibility="Collapsed" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
                     <StackPanel Spacing="12" Margin="32,24,32,32">
                         <Border Style="{StaticResource PageHeaderBorder}"><StackPanel Orientation="Horizontal" Spacing="14" VerticalAlignment="Center">
-                            <Border Style="{StaticResource IconTile}" Width="44" Height="44"><FontIcon Glyph="&#xEA86;" Style="{StaticResource TileGlyph}" FontSize="20" /></Border>
+                            <Border Style="{StaticResource HeroTile}"><FontIcon Glyph="&#xEA86;" Style="{StaticResource HeroGlyph}" /></Border>
                             <StackPanel VerticalAlignment="Center">
                                 <TextBlock Text="Providers" Style="{StaticResource PageTitle}" />
                                 <TextBlock Text="Providers add routes to RouteFinder. Their routes appear on the Routes page." Style="{StaticResource PageSubtitle}" />
@@ -512,7 +612,7 @@
                             <StackPanel Spacing="16">
                                 <Grid ColumnSpacing="14">
                                     <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-                                    <Border Style="{StaticResource IconTile}" Width="44" Height="44"><TextBlock Text="EZ" FontWeight="SemiBold" HorizontalAlignment="Center" VerticalAlignment="Center" Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}" /></Border>
+                                    <Border Style="{StaticResource HeroTile}"><TextBlock Text="EZ" FontWeight="SemiBold" HorizontalAlignment="Center" VerticalAlignment="Center" Foreground="White" /></Border>
                                     <StackPanel Grid.Column="1" VerticalAlignment="Center" Spacing="2">
                                         <TextBlock Text="EZConnect" Style="{StaticResource BodyStrongTextBlockStyle}" />
                                         <TextBlock x:Name="EzStatus" Style="{StaticResource Caption}" TextTrimming="CharacterEllipsis" />
@@ -537,7 +637,7 @@
                             <StackPanel Spacing="16">
                                 <Grid ColumnSpacing="14">
                                     <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-                                    <Border Style="{StaticResource IconTile}" Width="44" Height="44"><FontIcon Glyph="&#xE8E5;" Style="{StaticResource TileGlyph}" /></Border>
+                                    <Border Style="{StaticResource HeroTile}"><FontIcon Glyph="&#xE8E5;" Style="{StaticResource HeroGlyph}" /></Border>
                                     <StackPanel Grid.Column="1" VerticalAlignment="Center" Spacing="2">
                                         <TextBlock Text="Imported configurations" Style="{StaticResource BodyStrongTextBlockStyle}" />
                                         <TextBlock Text="WireGuard and Amnezia files you add yourself" Style="{StaticResource Caption}" />
@@ -575,7 +675,7 @@
                     <Grid Style="{StaticResource PageHeader}" ColumnSpacing="8">
                         <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
                         <StackPanel Orientation="Horizontal" Spacing="14" VerticalAlignment="Center">
-                            <Border Style="{StaticResource IconTile}" Width="44" Height="44"><FontIcon Glyph="&#xE909;" Style="{StaticResource TileGlyph}" FontSize="20" /></Border>
+                            <Border Style="{StaticResource HeroTile}"><FontIcon Glyph="&#xE909;" Style="{StaticResource HeroGlyph}" /></Border>
                             <StackPanel VerticalAlignment="Center">
                                 <TextBlock Text="Routes" Style="{StaticResource PageTitle}" />
                                 <TextBlock Text="Pick where your traffic exits. Test routes to compare latency." Style="{StaticResource PageSubtitle}" />
@@ -657,7 +757,7 @@
                     <Grid Style="{StaticResource PageHeader}" ColumnSpacing="8">
                         <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
                         <StackPanel Orientation="Horizontal" Spacing="14" VerticalAlignment="Center">
-                            <Border Style="{StaticResource IconTile}" Width="44" Height="44"><FontIcon Glyph="&#xE9D9;" Style="{StaticResource TileGlyph}" FontSize="20" /></Border>
+                            <Border Style="{StaticResource HeroTile}"><FontIcon Glyph="&#xE9D9;" Style="{StaticResource HeroGlyph}" /></Border>
                             <StackPanel VerticalAlignment="Center">
                                 <TextBlock Text="Activity" Style="{StaticResource PageTitle}" />
                                 <TextBlock Text="Connection events, diagnostics, and routing checks." Style="{StaticResource PageSubtitle}" />
@@ -702,7 +802,7 @@
                     <Grid Style="{StaticResource PageHeader}" Margin="32,24,32,8" ColumnSpacing="8">
                         <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
                         <StackPanel Orientation="Horizontal" Spacing="14" VerticalAlignment="Center">
-                            <Border Style="{StaticResource IconTile}" Width="44" Height="44"><FontIcon Glyph="&#xE713;" Style="{StaticResource TileGlyph}" FontSize="20" /></Border>
+                            <Border Style="{StaticResource HeroTile}"><FontIcon Glyph="&#xE713;" Style="{StaticResource HeroGlyph}" /></Border>
                             <StackPanel VerticalAlignment="Center">
                                 <TextBlock Text="Settings" Style="{StaticResource PageTitle}" />
                                 <TextBlock Text="Connection, network, and app preferences." Style="{StaticResource PageSubtitle}" />

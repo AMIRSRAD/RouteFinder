@@ -106,7 +106,7 @@ public sealed partial class MainWindow
         StatusLabel.Foreground = tone == StatusTone.Neutral
             ? (Brush)Application.Current.Resources["TextFillColorSecondaryBrush"] : fill;
         ConnectRing.BorderBrush = tone == StatusTone.Neutral
-            ? (Brush)Application.Current.Resources["ControlStrokeColorDefaultBrush"] : fill;
+            ? (Brush)Application.Current.Resources["BrandRing"] : fill;
         // A diagonal wash from the top-left corner in the state color; hidden when idle.
         var color = fill.Color;
         StatusGlow.Background = new LinearGradientBrush

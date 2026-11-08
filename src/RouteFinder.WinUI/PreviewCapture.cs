@@ -96,6 +96,17 @@ public sealed partial class MainWindow
                 await Task.Delay(300);
                 await CaptureRoot(Path.ChangeExtension(path, null) + "-" + page + ".png");
             }
+            // Light theme, for design review. The window backdrop is not captured, so stand in for light Mica.
+            Root.RequestedTheme = ElementTheme.Light;
+            Root.Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(Windows.UI.Color.FromArgb(255, 243, 243, 243));
+            foreach (string page in new[] { "home", "routes", "settings" })
+            {
+                ShowPage(page);
+                await Task.Delay(300);
+                await CaptureRoot(Path.ChangeExtension(path, null) + "-light-" + page + ".png");
+            }
+            Root.RequestedTheme = ElementTheme.Default;
+            Root.Background = null;
             ShowPage("home");
 
             ToggleConnection(this, new RoutedEventArgs());
