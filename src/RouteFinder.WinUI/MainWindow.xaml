@@ -640,12 +640,6 @@
                         <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
                         <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
                         <TextBlock x:Name="RouteListSummary" Grid.ColumnSpan="2" Style="{StaticResource Caption}" TextTrimming="CharacterEllipsis" />
-                        <StackPanel x:Name="InternetAdapterRow" Grid.Row="1" Orientation="Horizontal" Spacing="8">
-                            <TextBlock Text="Internet adapter" Style="{StaticResource Secondary}" VerticalAlignment="Center" />
-                            <Button x:Name="InternetAdapterButton" Click="OpenInternetAdapter" AutomationProperties.Name="Internet adapter" MaxWidth="260">
-                                <TextBlock x:Name="InternetAdapterLabel" Text="Automatic" TextTrimming="CharacterEllipsis" />
-                            </Button>
-                        </StackPanel>
                         <StackPanel x:Name="RouteTestActions" Grid.Row="1" Grid.Column="1" Orientation="Horizontal" Spacing="6">
                             <Button x:Name="TestRouteButton" Content="Test route" Click="TestSelectedRoute" />
                             <Button x:Name="TestAllButton" Content="Test all" Click="TestAllRoutes" />

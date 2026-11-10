@@ -70,7 +70,7 @@ public sealed partial class MainWindow
         RouteList.SelectionChanged += (_, _) =>
         {
             if (updatingRouteBrowser) return;
-            if (busy || Connected || session.NeedsCleanup)
+            if (busy || session.NeedsCleanup)
             {
                 RefreshRouteBrowser();
                 return;
@@ -184,7 +184,7 @@ public sealed partial class MainWindow
 
     async Task PickRunningApps(string[]? expected = null, bool background = false, string? groupName = null)
     {
-        if (busy || Connected || session.NeedsCleanup) return;
+        if (busy || session.NeedsCleanup) return;
         var existing = apps.ToHashSet(StringComparer.OrdinalIgnoreCase);
         string[]? paths = null;
         await Run(expected is null ? "Finding running apps…" : "Finding the game's files…", async () =>

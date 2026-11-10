@@ -9,6 +9,7 @@ namespace RouteFinder.WinUI;
 public sealed partial class MainWindow
 {
     NetworkInterface[] interfaces = [];
+    string[] loadedDns = [];
     bool loadingInterfaces;
 
     // Fills the Interfaces and DNS card from the live Windows adapter list.
@@ -58,13 +59,14 @@ public sealed partial class MainWindow
         InterfaceGateway.Text = Join(ip.GatewayAddresses.Select(item => (object)item.Address));
         InterfaceAddresses.Text = Join(ip.UnicastAddresses.Select(item => (object)item.Address));
         InterfaceDns.Text = Join(ip.DnsAddresses.Select(item => (object)item));
-        DnsInput.Load(ip.DnsAddresses.Select(item => item.ToString()));
+        loadedDns = ip.DnsAddresses.Select(item => item.ToString()).ToArray();
+        DnsInput.Load(loadedDns);
         UpdateDnsButtons();
     }
 
     void UpdateDnsButtons()
     {
-        bool editable = !busy && !AppRouterActive && !Connected && !session.NeedsCleanup && !preview &&
+        bool editable = !busy && !session.NeedsCleanup && !preview &&
             InterfacePicker.SelectedIndex >= 0;
         ApplyDnsButton.IsEnabled = AutoDnsButton.IsEnabled = DnsInput.IsEnabled = editable;
     }
@@ -74,13 +76,15 @@ public sealed partial class MainWindow
 
     async Task ChangeInterfaceDns(bool automatic)
     {
-        if (busy || AppRouterActive || Connected || InterfacePicker.SelectedIndex < 0 ||
+        if (busy || InterfacePicker.SelectedIndex < 0 ||
             InterfacePicker.SelectedIndex >= interfaces.Length) return;
         var servers = new List<IPAddress>();
         // "Automatic" in the provider list means the same as the Use automatic DNS button.
         if (!automatic && !DnsInput.IsAutomatic)
         {
-            foreach (string value in DnsInput.Servers)
+            // Untouched fields mean "keep what is there", including servers past the two shown.
+            var wanted = DnsInput.Extra is not null && DnsInput.Servers.SequenceEqual(loadedDns.Take(2)) ? loadedDns : DnsInput.Servers;
+            foreach (string value in wanted)
             {
                 if (!IPAddress.TryParse(value, out var address) || address.Equals(IPAddress.Any) || address.Equals(IPAddress.IPv6Any))
                 {

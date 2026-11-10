@@ -15,7 +15,7 @@ public sealed partial class MainWindow
     {
         public required InfoBar Error;
         public required ComboBox Language, WindowSize;
-        public required ToggleSwitch Tray, Tips, Recover, KillSwitch, BypassLan, Portable, AutoMtu, ProxyAllTraffic;
+        public required ToggleSwitch CloseTray, Tray, Tips, Recover, KillSwitch, BypassLan, Portable, AutoMtu, ProxyAllTraffic;
         public required NumberBox Idle, PeerTimeout, TestTimeout, Mtu, Keepalive;
         public required TextBox Bypass, Excluded, ProxyEndpoint, ProxyUser;
         public required PasswordBox ProxyPassword;
@@ -38,7 +38,8 @@ public sealed partial class MainWindow
         Row("\uF2B7", "Language", "Takes effect after you restart RouteFinder.", language);
         var size = new ComboBox { ItemsSource = WindowSizes.Select(item => $"{item.Width} × {item.Height}").ToArray(), MinWidth = 160 };
         Row("\uE740", "Window size", null, size);
-        var tray = Toggle("\uE8A7", "Minimize to tray while connected", "Keep RouteFinder running in the notification area.");
+        var closeTray = Toggle("\uE8A7", "Close to tray", "Closing the window keeps RouteFinder running. Quit from the tray menu with Exit.");
+        var tray = Toggle("\uE8A7", "Minimize to tray while connected", "Hide to the tray when minimized.");
         var tips = Toggle("\uE82F", "Show tips", "Show a short how-to on the Home page at startup.");
 
         Section("Connection");
@@ -88,7 +89,7 @@ public sealed partial class MainWindow
 
         settings = new SettingsFields
         {
-            Error = error, Language = language, WindowSize = size, Tray = tray, Tips = tips, Recover = recover,
+            Error = error, CloseTray = closeTray, Language = language, WindowSize = size, Tray = tray, Tips = tips, Recover = recover,
             KillSwitch = killSwitch, BypassLan = bypassLan, Portable = portable, AutoMtu = autoMtu, ProxyAllTraffic = proxyAllTraffic,
             Idle = idle, PeerTimeout = peerTimeout, TestTimeout = testTimeout, Mtu = mtu, Keepalive = keepalive, Dns = dns,
             Bypass = bypass, Excluded = excluded, ProxyEndpoint = proxyEndpoint, ProxyUser = proxyUser, ProxyPassword = proxyPassword
@@ -174,6 +175,7 @@ public sealed partial class MainWindow
         f.Error.IsOpen = false;
         f.Language.SelectedIndex = UiLanguage.Index;
         f.WindowSize.SelectedIndex = Math.Clamp(preferences.WindowPreset, 0, WindowSizes.Length - 1);
+        f.CloseTray.IsOn = preferences.CloseToTray;
         f.Tray.IsOn = preferences.MinimizeToTray;
         f.Tips.IsOn = preferences.ShowTutorials;
         f.Recover.IsOn = preferences.RecoverStoppedTunnel;
@@ -229,7 +231,7 @@ public sealed partial class MainWindow
             var updated = preferences with
             {
                 KillSwitch = f.KillSwitch.IsOn, PortableEngine = f.Portable.IsOn, AutoMtu = f.AutoMtu.IsOn,
-                MinimizeToTray = f.Tray.IsOn, RecoverStoppedTunnel = f.Recover.IsOn, ShowTutorials = f.Tips.IsOn,
+                CloseToTray = f.CloseTray.IsOn, MinimizeToTray = f.Tray.IsOn, RecoverStoppedTunnel = f.Recover.IsOn, ShowTutorials = f.Tips.IsOn,
                 WindowPreset = Math.Max(f.WindowSize.SelectedIndex, 0),
                 OnDemandIdleSeconds = Number(f.Idle, "Auto-disconnect delay", 5, 3600)!.Value,
                 BypassLan = f.BypassLan.IsOn, DnsOverride = string.Join(",", dnsAddresses),

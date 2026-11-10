@@ -106,11 +106,19 @@ public sealed partial class MainWindow
         return attached;
     }
 
-    /// <summary>Looks for waiting executables among the running processes and adds the ones it finds.</summary>
-    async Task ResolvePendingApps()
+    DateTime lastDiskSearch = DateTime.MinValue;
+    string lastPendingSignature = "";
+
+    /// <summary>
+    /// Looks for waiting executables among the running processes and adds the ones it finds. The slower search of
+    /// install folders runs only when asked and at most every ten minutes for the same waiting names.
+    /// </summary>
+    async Task ResolvePendingApps(bool disk = true)
     {
         var names = groups.SelectMany(group => group.Pending).ToArray();
         if (names.Length == 0 || preview || resolving) return;
+        string signature = string.Join("|", names.Order(StringComparer.OrdinalIgnoreCase));
+        bool searchDisk = disk && (signature != lastPendingSignature || DateTime.UtcNow - lastDiskSearch > TimeSpan.FromMinutes(10));
         resolving = true;
         string[] found;
         var searches = groups.Where(group => group.Pending.Count > 0)
@@ -121,11 +129,17 @@ public sealed partial class MainWindow
             {
                 // Running processes first, then the files on disk near each group's known files and install folder.
                 var running = FindRunningApps(new HashSet<string>(StringComparer.OrdinalIgnoreCase), names, false);
-                var installed = searches.SelectMany(search => FindInstalledApps(
-                    search.Names.Where(name => !running.Any(path => ExecutableMatches(path, name))), search.Related, search.Name));
-                return running.Concat(installed).Distinct(StringComparer.OrdinalIgnoreCase)
+                var trusted = searches.SelectMany(search => TrustedRunning(running, search.Names, search.Related, search.Name)).ToArray();
+                var installed = !searchDisk ? [] : searches.SelectMany(search => FindInstalledApps(
+                    search.Names.Where(name => !trusted.Any(path => ExecutableMatches(path, name))), search.Related, search.Name));
+                return trusted.Concat(installed).Distinct(StringComparer.OrdinalIgnoreCase)
                     .Where(path => !apps.Contains(path, StringComparer.OrdinalIgnoreCase)).ToArray();
             });
+            if (searchDisk)
+            {
+                lastDiskSearch = DateTime.UtcNow;
+                lastPendingSignature = signature;
+            }
         }
         finally { resolving = false; }
         if (found.Length == 0 || closing) return;
@@ -156,7 +170,7 @@ public sealed partial class MainWindow
 
     void ChooseGroupRoute(ProfileStore.AppGroup group, AppRouteMode mode)
     {
-        if (windowsAppDraft is not { } draft || busy || AppRouterActive) return;
+        if (windowsAppDraft is not { } draft || busy) return;
         group.Direct = mode.Kind == AppRouteKind.Adapter;
         group.AdapterId = group.Direct ? mode.AdapterId : "";
         bool uplinkChanged = false;

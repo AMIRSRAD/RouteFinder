@@ -49,15 +49,19 @@ public sealed partial class MainWindow
             .Any(path => path.Equals(full, StringComparison.OrdinalIgnoreCase));
     }
 
-    /// <summary>
-    /// Searches installed files for the given executable names. Search roots are the folders of related files that
-    /// were already found (and up to three parents, short of shared folders), plus install folders from the Windows
-    /// uninstall list whose name matches <paramref name="title"/>. When several copies exist, the newest wins.
-    /// </summary>
-    static string[] FindInstalledApps(IEnumerable<string> names, IEnumerable<string> related, string? title)
+    // File names used by many unrelated programs (Squirrel apps all ship Update.exe). A running process with one of
+    // these names only counts when it lives inside the group's own folders.
+    static readonly HashSet<string> GenericNames = new(StringComparer.OrdinalIgnoreCase)
     {
-        var stems = names.Select(ExecutableStem).ToHashSet(StringComparer.OrdinalIgnoreCase);
-        if (stems.Count == 0) return [];
+        "update", "updater", "installer", "setup", "uninstall", "uninstaller", "helper", "launcher", "service",
+        "crashreporter", "crashhandler", "crashpad_handler", "bootstrapper", "patcher"
+    };
+
+    internal static bool IsGenericName(string nameOrPath) => GenericNames.Contains(ExecutableStem(nameOrPath));
+
+    /// <summary>Folders worth searching for a group: near its known files (up to two levels up, short of shared folders) plus its install folders.</summary>
+    static List<string> SearchRoots(IEnumerable<string> related, string? title)
+    {
         var roots = new List<string>();
         void AddRoot(string? folder)
         {
@@ -78,7 +82,7 @@ public sealed partial class MainWindow
         {
             // Climb from the app's folder toward its install root, stopping before shared folders.
             string? folder = Path.GetDirectoryName(path);
-            for (int level = 0; level < 4 && folder is not null && !IsBroadFolder(folder); level++)
+            for (int level = 0; level < 2 && folder is not null && !IsBroadFolder(folder); level++)
             {
                 string? parent = Path.GetDirectoryName(folder);
                 if (parent is null || IsBroadFolder(parent)) break;
@@ -87,14 +91,46 @@ public sealed partial class MainWindow
             AddRoot(folder);
         }
         foreach (string folder in UninstallFolders(title)) AddRoot(folder);
+        return roots;
+    }
 
-        var found = new Dictionary<string, (string Path, DateTime Written)>(StringComparer.OrdinalIgnoreCase);
-        foreach (string root in roots)
+    internal static bool IsInsideRoots(string path, IEnumerable<string> roots) => roots.Any(root =>
+        path.StartsWith(root + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase));
+
+    /// <summary>
+    /// Keeps running processes that really belong to the group: distinctive names anywhere, generic names (Update.exe)
+    /// only inside the group's own folders.
+    /// </summary>
+    internal static string[] TrustedRunning(IEnumerable<string> running, IReadOnlyCollection<string> names,
+        IEnumerable<string> related, string? title)
+    {
+        List<string>? roots = null;
+        var kept = new List<string>();
+        foreach (string path in running)
         {
+            if (!names.Any(name => ExecutableMatches(path, name))) continue;
+            if (!IsGenericName(path) || IsInsideRoots(path, roots ??= SearchRoots(related, title))) kept.Add(path);
+        }
+        return kept.ToArray();
+    }
+
+    /// <summary>
+    /// Searches installed files for the given executable names under the group's search roots. When several copies
+    /// exist, the newest wins. Each root is capped so a huge library cannot stall the search.
+    /// </summary>
+    static string[] FindInstalledApps(IEnumerable<string> names, IEnumerable<string> related, string? title)
+    {
+        var stems = names.Select(ExecutableStem).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        if (stems.Count == 0) return [];
+        var found = new Dictionary<string, (string Path, DateTime Written)>(StringComparer.OrdinalIgnoreCase);
+        foreach (string root in SearchRoots(related, title))
+        {
+            int visited = 0;
             try
             {
                 foreach (string file in Directory.EnumerateFiles(root, "*.exe", DeepSearch))
                 {
+                    if (++visited > 20000) break;
                     string stem = ExecutableStem(file);
                     if (!stems.Contains(stem)) continue;
                     var written = File.GetLastWriteTimeUtc(file);

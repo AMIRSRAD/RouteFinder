@@ -60,47 +60,6 @@ public sealed partial class MainWindow
         return name;
     }
 
-    async void OpenInternetAdapter(object sender, RoutedEventArgs args)
-    {
-        if (preview || busy || Connected || session.NeedsCleanup || route is not { } selected) return;
-        try { await ChooseInternetAdapter(selected); }
-        catch (Exception error) { Report(error.Message); }
-    }
-
-    async Task ChooseInternetAdapter(RouteChoice choice)
-    {
-        var selected = UplinkFor(choice);
-        var options = new List<(string? Id, string Label)> { (null, "Automatic (Windows chooses)") };
-        options.AddRange(NetworkInterface.GetAllNetworkInterfaces()
-            .Where(adapter => adapter.NetworkInterfaceType is not (NetworkInterfaceType.Loopback or NetworkInterfaceType.Tunnel) &&
-                !adapter.Description.Contains("WireSock", StringComparison.OrdinalIgnoreCase))
-            .OrderByDescending(adapter => adapter.OperationalStatus == OperationalStatus.Up)
-            .ThenBy(adapter => adapter.Name, StringComparer.CurrentCultureIgnoreCase)
-            .Select(adapter => ((string?)adapter.Id, adapter.OperationalStatus == OperationalStatus.Up
-                ? adapter.Name : $"{adapter.Name} (disconnected)")));
-        if (selected is not null && !options.Any(option => option.Id == selected))
-            options.Add((selected, "Saved adapter (unavailable)"));
-
-        var picker = new ComboBox { Header = "Use this internet adapter", HorizontalAlignment = HorizontalAlignment.Stretch,
-            ItemsSource = options.Select(option => option.Label).ToArray(),
-            SelectedIndex = options.FindIndex(option => option.Id == selected) };
-        var panel = new StackPanel { Spacing = 10, MaxWidth = 420 };
-        panel.Children.Add(new TextBlock
-        {
-            Text = "Choose the connection that carries this route’s VPN tunnel, such as Ethernet, Wi-Fi, or a phone hotspot. This choice applies when you connect or test the route.",
-            TextWrapping = TextWrapping.Wrap
-        });
-        panel.Children.Add(picker);
-        var dialog = MakeDialog("Internet adapter", panel, "Save");
-        if (await dialog.ShowAsync() != ContentDialogResult.Primary || picker.SelectedIndex < 0) return;
-
-        var option = options[picker.SelectedIndex];
-        SetRouteUplink(choice, option.Id);
-        RenderApps();
-        Refresh();
-        Report($"{choice.Title} · Internet adapter: {option.Label}", InfoBarSeverity.Success);
-    }
-
     /// <summary>Sets which adapter carries a route's VPN tunnel. Null means Windows chooses.</summary>
     void SetRouteUplink(RouteChoice choice, string? adapterId)
     {
@@ -183,6 +142,7 @@ public sealed partial class MainWindow
             WriteStore("applications", () => ProfileStore.SaveApplications(updated.ToList()));
         ApplyProfileAppSelection(saved);
         SaveAppSelection();
+        StoreRouteChoices();
         if (Scope.SelectedIndex == 1) Scope.SelectedIndex = 0;
         RenderApps();
         Refresh();

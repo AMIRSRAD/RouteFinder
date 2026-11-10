@@ -104,11 +104,6 @@ public sealed partial class MainWindow
 
     async Task RunDestinationTests(IPAddress address, DestinationOptions options, RouteChoice[] chosen)
     {
-        if (chosen.Length > 0 && directRouting is not null)
-        {
-            Report("Stop Windows routing before running VPN route tests.", InfoBarSeverity.Informational);
-            return;
-        }
         if (busy || Connected || session.NeedsCleanup || (chosen.Length > 0 && (options.Port is null || !preview && !EnsureAdministrator()))) return;
         using var cancellation = new CancellationTokenSource();
         var token = cancellation.Token;
