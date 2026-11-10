@@ -32,7 +32,7 @@ public sealed partial class MainWindow
         if (fallback is null || preferences.PortableEngine || PinnedTunnelAdapter(fallback) is not { } adapter) return [];
         var paths = new List<string>();
         if (Environment.ProcessPath is { } self) paths.Add(self);
-        paths.AddRange((vpnPaths ?? VpnApps()).Where(File.Exists));
+        paths.AddRange((vpnPaths ?? VpnApps()).Where(ExistsCached));
         return paths.Distinct(StringComparer.OrdinalIgnoreCase).Select(path => new DirectAppRouting.Rule(path, adapter)).ToArray();
     }
 
@@ -49,6 +49,7 @@ public sealed partial class MainWindow
     readonly HashSet<string> seenCheckedWindowsApps = new(StringComparer.OrdinalIgnoreCase);
     readonly HashSet<string> suggestedWindowsApps = new(StringComparer.OrdinalIgnoreCase);
     WindowsAdapterChoice[] windowsAdapters = [];
+    string adapterListSignature = "";
 
     sealed record WindowsAdapterChoice(string Id, string Label, bool Available, bool HasGateway = false)
     {
@@ -92,7 +93,7 @@ public sealed partial class MainWindow
     /// was not found, by name. WireSock matches those by process name, the same way EZConnect routes catalog games.
     /// </summary>
     string[] VpnTargets() => VpnApps().Concat(groups.Where(group => group.Enabled && !group.Direct)
-            .SelectMany(group => group.Pending).Where(RouteFinder.Core.WireSockTunnel.IsExecutableName))
+            .SelectMany(group => group.Pending).Where(name => RouteFinder.Core.WireSockTunnel.IsExecutableName(name) && !IsGenericName(name)))
         .Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
 
     AppRouteMode CurrentMode(string path, IReadOnlyList<AppRouteMode> modes)
@@ -127,7 +128,7 @@ public sealed partial class MainWindow
 
     void ChooseAppRoute(string path, AppRouteMode mode)
     {
-        if (windowsAppDraft is not { } draft || busy || AppRouterActive) return;
+        if (windowsAppDraft is not { } draft || busy) return;
         // The menu only decides how the app connects. Whether it is used at all is the tick box beside it.
         suggestedWindowsApps.Remove(path);
         bool uplinkChanged = false;
@@ -162,7 +163,8 @@ public sealed partial class MainWindow
             {
                 DirectAppAdapters = draft.Where(rule => rule.Value.Length > 0 || appVpnDraft.ContainsKey(rule.Key))
                     .ToDictionary(rule => rule.Key, rule => rule.Value, StringComparer.OrdinalIgnoreCase),
-                AppVpnRoutes = new(appVpnDraft, StringComparer.OrdinalIgnoreCase)
+                AppVpnRoutes = new(appVpnDraft, StringComparer.OrdinalIgnoreCase),
+                DirectFallbackAdapter = windowsFallbackDraft
             };
             ProfileStore.SavePreferences(next);
             preferences = next;
@@ -172,7 +174,7 @@ public sealed partial class MainWindow
 
     bool SyncWindowsAppSuggestions()
     {
-        if (windowsAppDraft is not { } draft || AppRouterActive) return false;
+        if (windowsAppDraft is not { } draft) return false;
         var selected = apps.Where(checkedApps.Contains).ToHashSet(StringComparer.OrdinalIgnoreCase);
         seenCheckedWindowsApps.IntersectWith(selected);
         bool changed = false;
@@ -190,7 +192,11 @@ public sealed partial class MainWindow
         return changed;
     }
 
-    void RefreshWindowsAdapters(object sender, RoutedEventArgs args) => ReloadWindowsAdapters();
+    void RefreshWindowsAdapters(object sender, RoutedEventArgs args)
+    {
+        ReloadWindowsAdapters();
+        Refresh(refreshRouteBrowser: false);
+    }
 
     void ReloadWindowsAdapters()
     {
@@ -219,6 +225,11 @@ public sealed partial class MainWindow
             WindowsDefaultAdapter.Text = "Windows adapter information is unavailable.";
             Report(error.Message);
         }
+        // Rebuilding the menus closes any that are open, so skip it when nothing about the adapters changed.
+        string listSignature = string.Join("|", windowsAdapters.Select(adapter => $"{adapter.Id}:{adapter.Label}:{adapter.Available}:{adapter.HasGateway}"))
+            + "|" + windowsFallbackDraft;
+        if (listSignature == adapterListSignature) return;
+        adapterListSignature = listSignature;
         var choices = new List<WindowsAdapterChoice> { new("", "Follow Windows", true) };
         choices.AddRange(windowsAdapters.Where(adapter => adapter.HasGateway));
         if (windowsFallbackDraft is { } saved && !choices.Any(adapter => adapter.Id.Equals(saved, StringComparison.OrdinalIgnoreCase)))
@@ -240,7 +251,8 @@ public sealed partial class MainWindow
     {
         if (loadingWindowsFallback || WindowsFallbackAdapter.SelectedItem is not WindowsAdapterChoice choice) return;
         windowsFallbackDraft = choice.Id.Length == 0 ? null : choice.Id;
-        UpdateWindowsRoutingActions();
+        StoreRouteChoices();
+        Refresh(refreshRouteBrowser: false);
     }
 
     bool StoreWindowsAppRules()

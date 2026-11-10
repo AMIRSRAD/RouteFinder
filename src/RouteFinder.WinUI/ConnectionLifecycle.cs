@@ -34,7 +34,7 @@ public sealed partial class MainWindow
     void UpdatePolling()
     {
         bool visibleTelemetry = !closing && session.HasTunnel && WindowCanRenderTelemetry;
-        bool backgroundWork = armed is not null || session.HasSelectedUplink ||
+        bool backgroundWork = armed is not null || session.HasSelectedUplink || session.HasTunnel && !closing ||
             preferences.RecoverStoppedTunnel && session.HasTunnel && !recoveryAttempted;
         if (preview || busy || closing || exitRequested || !visibleTelemetry && !backgroundWork)
         {
@@ -92,6 +92,19 @@ public sealed partial class MainWindow
         };
     }
 
+    bool shownTrayHint;
+
+    void HideToTray()
+    {
+        hiddenInTray = true;
+        UpdateTray();
+        AppWindow.Hide();
+        UpdatePolling();
+        if (shownTrayHint || tray is null) return;
+        shownTrayHint = true;
+        tray.ShowBalloonTip(2500, "RouteFinder", "Still running in the tray. Right-click the icon and choose Exit to quit.", Forms.ToolTipIcon.Info);
+    }
+
     internal void RestoreWindow()
     {
         if (closing) return;
@@ -108,7 +121,8 @@ public sealed partial class MainWindow
     void UpdateTray()
     {
         if (tray is null) return;
-        tray.Visible = hiddenInTray || armed is not null || preferences.MinimizeToTray && session.HasTunnel;
+        tray.Visible = hiddenInTray || armed is not null || preferences.MinimizeToTray && session.HasTunnel ||
+            preferences.CloseToTray && !preview && !verifying;
         tray.Text = holdTunnel ? "RouteFinder · Tunnel held open"
             : armed is { } watch ? $"RouteFinder · Watching {watch.Paths.Count} apps" : "RouteFinder";
         trayDisconnect!.Enabled = !busy && (session.HasTunnel || session.NeedsCleanup);

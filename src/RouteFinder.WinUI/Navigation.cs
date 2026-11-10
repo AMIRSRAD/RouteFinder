@@ -19,8 +19,7 @@ public sealed partial class MainWindow
 
     internal void ShowPage(string page)
     {
-        if (page == "settings" && currentPage != "settings") LoadSettingsFields();
-        if (page == "network" && currentPage != "network") LoadInterfaces();
+        bool openingNetwork = page == "network" && currentPage != "network";
         if (page == "providers") RefreshProviders();
         if (page == "apps") _ = ResolvePendingApps();
         currentPage = page;
@@ -43,6 +42,12 @@ public sealed partial class MainWindow
         };
         if (!ReferenceEquals(Nav.SelectedItem, target)) Nav.SelectedItem = target;
         UpdateBusyStrip();
+        if (openingNetwork)
+        {
+            ReloadWindowsAdapters();
+            LoadInterfaces();
+            Refresh(refreshRouteBrowser: false);
+        }
     }
 
     void GoToRoutes(object sender, RoutedEventArgs args) => ShowPage("routes");

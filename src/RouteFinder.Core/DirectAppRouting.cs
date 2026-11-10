@@ -44,7 +44,14 @@ public sealed class DirectAppRouting : IDisposable
             adapter.GetIPProperties().GetIPv4Properties()?.Index == index)?.Name;
     }
 
-    public static DirectAppRouting Start(IEnumerable<Rule> rules, string? fallbackAdapterId = null)
+    /// <summary>
+    /// Route-policy families (ipv4, ipv6) this instance switched on. When replacing one set of rules with another,
+    /// pass these to the next Start so Windows' setting stays on instead of being turned off and on again.
+    /// </summary>
+    public string[] EnabledFamilies => enabledFamilies.ToArray();
+
+    public static DirectAppRouting Start(IEnumerable<Rule> rules, string? fallbackAdapterId = null,
+        IEnumerable<string>? retainedFamilies = null)
     {
         if (!IsSupported()) throw new PlatformNotSupportedException("This Windows build does not expose per-app connection policies.");
         var adapters = NetworkInterface.GetAllNetworkInterfaces().ToDictionary(adapter => adapter.Id, StringComparer.OrdinalIgnoreCase);
@@ -105,8 +112,12 @@ public sealed class DirectAppRouting : IDisposable
                 AddPolicy(engine, null, defaultLuid, 1, userCondition);
             }
             Check(FwpmTransactionCommit0(engine), "Apply direct routing rules");
+            var retained = (retainedFamilies ?? []).ToHashSet(StringComparer.OrdinalIgnoreCase);
             foreach (string family in new[] { "ipv4", "ipv6" })
-                routing.EnableRoutePolicies(family);
+            {
+                if (retained.Contains(family)) routing.enabledFamilies.Add(family);
+                else routing.EnableRoutePolicies(family);
+            }
             return routing;
         }
         catch (Exception startupError)
@@ -151,14 +162,20 @@ public sealed class DirectAppRouting : IDisposable
         finally { if (appId != 0) FwpmFreeMemory0(ref appId); }
     }
 
-    public void Dispose()
+    public void Dispose() => Release(restorePolicies: true);
+
+    /// <summary>
+    /// Removes this instance's rules. With restorePolicies false, Windows' route-policy setting is left on for the
+    /// next instance; the caller must then start one or call <see cref="RestorePolicies"/>.
+    /// </summary>
+    public void Release(bool restorePolicies)
     {
         if (stopped) return;
         var failures = new List<Exception>();
         // Restore route policies even when closing the filtering engine fails; a retry closes the engine again.
         try { engine.CloseChecked(); }
         catch (Exception error) { failures.Add(error); }
-        foreach (string family in enabledFamilies.ToArray())
+        foreach (string family in restorePolicies ? enabledFamilies.ToArray() : [])
         {
             try
             {
@@ -175,6 +192,18 @@ public sealed class DirectAppRouting : IDisposable
 
     // netsh prints localized labels and values, so the setting is detected by comparing the parameter block
     // before and after enabling it. Only a family this process changed is restored on Dispose.
+    /// <summary>Turns Windows route policies back off for families that were kept on across a swap that then failed.</summary>
+    public static void RestorePolicies(IEnumerable<string> families)
+    {
+        var failures = new List<Exception>();
+        foreach (string family in families)
+        {
+            try { RunNetsh(family, "set", "global", "routepolicies=disabled", "store=active"); }
+            catch (Exception error) { failures.Add(error); }
+        }
+        if (failures.Count > 0) throw new AggregateException("Could not restore Windows route policy settings.", failures);
+    }
+
     private void EnableRoutePolicies(string family)
     {
         var before = GlobalParameters(family);

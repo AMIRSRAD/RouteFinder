@@ -252,7 +252,7 @@ public sealed partial class MainWindow
         if (await dialog.ShowAsync() != ContentDialogResult.Primary || package is null) return;
         if (install)
         {
-            if (busy || AppRouterActive || session.HasTunnel || session.NeedsCleanup)
+            if (busy || session.HasTunnel || session.NeedsCleanup)
             {
                 Report("Stop routing and finish pending connection cleanup before installing the update.");
                 return;
@@ -273,7 +273,7 @@ public sealed partial class MainWindow
                 string hash = Convert.ToHexString(await System.Security.Cryptography.SHA256.HashDataAsync(installerFile));
                 if (!hash.Equals(package.Sha256, StringComparison.OrdinalIgnoreCase))
                     throw new IOException("The downloaded installer changed after verification.");
-                if (busy || closing || AppRouterActive || session.HasTunnel || session.NeedsCleanup) return;
+                if (busy || closing || session.HasTunnel || session.NeedsCleanup) return;
                 var start = new ProcessStartInfo(verified) { UseShellExecute = false };
                 start.ArgumentList.Add($"/UPDATEPID={Environment.ProcessId}");
                 using var installer = Process.Start(start) ?? throw new InvalidOperationException("Could not open the update installer.");

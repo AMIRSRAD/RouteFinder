@@ -96,11 +96,6 @@ public sealed partial class MainWindow
 
     async Task RunRouteTests(RouteChoice[] choices)
     {
-        if (directRouting is not null)
-        {
-            Report("Stop Windows routing before running VPN route tests.", InfoBarSeverity.Informational);
-            return;
-        }
         var summaries = await CollectRouteTests(choices);
         if (exitRequested || summaries.Count == 0) return;
         if (choices.Length == 1 && measurements.TryGetValue(choices[0].Key, out var result) &&

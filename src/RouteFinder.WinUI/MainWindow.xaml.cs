@@ -55,6 +55,7 @@ public sealed partial class MainWindow : Window
         SetTitleBar(WindowHeader);
         ApplyTitleBarTheme();
         Root.ActualThemeChanged += (_, _) => { ApplyTitleBarTheme(); ApplyStatusTone(); RenderApps(); };
+        WatchNetworkChanges();
         ActivityList.ItemsSource = activity;
         activity.CollectionChanged += (_, _) =>
             EmptyActivity.Visibility = activity.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
@@ -77,6 +78,8 @@ public sealed partial class MainWindow : Window
             UpdatePolling();
         };
         InitializeTray();
+        ApplyTrayTheme();
+        WatchSystemTheme();
 
         try
         {
@@ -340,8 +343,10 @@ public sealed partial class MainWindow : Window
 
     void Refresh(bool refreshRouteBrowser = true)
     {
-        bool editable = !busy && !Connected && !session.NeedsCleanup;
-        bool vpnEditable = editable && directRouting is null;
+        // Most settings stay editable while connected; the tunnel reconnects to pick them up.
+        bool editable = !busy && !session.NeedsCleanup;
+        bool idle = editable && !Connected;
+        bool vpnEditable = idle;
         SyncWindowsAppSuggestions();
         UpdateWindowsRoutingActions();
         QueueAdapterSync();
@@ -350,7 +355,7 @@ public sealed partial class MainWindow : Window
             CancelWatch();
         Scope.IsEnabled = editable;
         RenderAppsIfRouteChanged();
-        bool rulesEditable = editable && !AppRouterActive;
+        bool rulesEditable = editable;
         foreach (var row in AppRows.Children.OfType<Grid>())
             foreach (var control in row.Children.OfType<Control>()) control.IsEnabled = rulesEditable && !preview;
         SetGroupRowsEnabled(rulesEditable && !preview);
@@ -359,7 +364,7 @@ public sealed partial class MainWindow : Window
         EmptyApps.Visibility = listed == 0 ? Visibility.Visible : Visibility.Collapsed;
         UpdatePresetSection();
         AddAppsButton.IsEnabled = editable && !preview;
-        AddRouteButton.IsEnabled = editable;
+        AddRouteButton.IsEnabled = idle;
         ImportRouteCommand.IsEnabled = !preview;
         AccountCommand.Text = UiLanguage.Text(session.SignedIn ? "Manage EZConnect account…" : "Sign in to EZConnect…");
         CatalogCommand.Visibility = accountCatalog is { Games.Count: > 0 } ? Visibility.Visible : Visibility.Collapsed;
@@ -379,26 +384,23 @@ public sealed partial class MainWindow : Window
               (onCount > 3 ? $" +{onCount - 3}" : "");
         HomeRouteTitle.Text = route?.Title ?? UiLanguage.Text("No route selected");
         if (refreshRouteBrowser) RefreshRouteBrowser();
-        InternetAdapterRow.Visibility = route is null ? Visibility.Collapsed : Visibility.Visible;
-        InternetAdapterButton.IsEnabled = editable && route is not null && !preview;
-        InternetAdapterLabel.Text = UplinkLabel(route is { } selected ? UplinkFor(selected) : null);
-        AutomationProperties.SetName(InternetAdapterButton, $"{UiLanguage.Text("Internet adapter")} · {InternetAdapterLabel.Text}");
         RefreshConnectionActions();
         SetActionLabel(TestRouteButton, activeTest is null ? "Test route" : "Cancel test", activeTest is null ? "\uE9D9" : "\uE711");
         TestAllButton.IsEnabled = vpnEditable && Routes().Any();
         TestRouteButton.IsEnabled = activeTest is { IsCancellationRequested: false } || vpnEditable && route is not null;
         CompareButton.IsEnabled = vpnEditable && Routes().Skip(1).Any();
         DestinationButton.IsEnabled = vpnEditable && Routes().Any(choice => choice.Service?.IsDownload != true);
-        RouteOptionsButton.IsEnabled = editable && route is not null;
+        RouteOptionsButton.IsEnabled = idle && route is not null;
         TestShortlistButton.IsEnabled = vpnEditable && RouteList.Items.Count > 0;
         ClearTestsButton.IsEnabled = !preview && editable && measurements.Count > 0;
-        Ipv6Button.IsEnabled = !preview && editable;
+        Ipv6Button.IsEnabled = !preview && idle;
         RouteToolsButton.IsEnabled = CompareButton.IsEnabled || DestinationButton.IsEnabled || RouteOptionsButton.IsEnabled ||
             TestShortlistButton.IsEnabled || ClearTestsButton.IsEnabled;
         SetActionLabel(ConnectButton, Connected ? "Disconnect" : session.NeedsCleanup ? "Retry cleanup" : "Connect",
             Connected ? "\uE71A" : session.NeedsCleanup ? "\uE72C" : "\uE7E8");
         ConnectButton.IsEnabled = !busy &&
             (Connected || session.NeedsCleanup || route is not null && (entirePc || vpnCount > 0));
+        CheckLiveChanges();
         RefreshProviders();
         RefreshVpnBar();
         UpdateDnsButtons();
@@ -531,7 +533,8 @@ public sealed partial class MainWindow : Window
         }
         if (route is not { } selected) return;
         if (!EnsureAdministrator()) return;
-        await ResolvePendingApps();
+        // Quick look at running processes only; install-folder scans never delay connecting. Run keeps Connect from being pressed twice.
+        if (groups.Any(group => group.Pending.Count > 0)) await Run("Preparing…", () => ResolvePendingApps(disk: false));
         bool entirePc = console || Scope.SelectedIndex == 1;
         string[] paths = entirePc ? [] : VpnTargets();
         if (!entirePc && paths.Length == 0)
@@ -569,6 +572,7 @@ public sealed partial class MainWindow : Window
                 uplinkAdapterId: activeFallback is not null && !console ? PinnedTunnelAdapter(activeFallback) : UplinkFor(selected));
             connectedAt = DateTimeOffset.UtcNow;
             reconnectFailed = false;
+            if (!console) RememberConnectedSetup();
             ResetTrafficHealth();
             connectedForConsole = console;
             if (!automatic) recoveryAttempted = false;
@@ -621,7 +625,15 @@ public sealed partial class MainWindow : Window
 
     async void OnClosing(AppWindow sender, AppWindowClosingEventArgs args)
     {
-        if (closing || (!busy && !session.HasTunnel && !session.NeedsCleanup)) return;
+        if (closing) return;
+        // Closing the window sends the app to the tray; Exit in the tray menu is what quits.
+        if (preferences.CloseToTray && !preview && !verifying)
+        {
+            args.Cancel = true;
+            HideToTray();
+            return;
+        }
+        if (!busy && !session.HasTunnel && !session.NeedsCleanup) return;
         args.Cancel = true;
         await RequestExit();
     }

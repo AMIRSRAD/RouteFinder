@@ -110,6 +110,17 @@ public sealed partial class MainWindow
                 .Single(item => item.Key == "local:Preferred route");
             if (!window.checkedApps.SetEquals([selected]))
                 throw new InvalidOperationException("Switching imported routes reused the previous route's apps.");
+            // Switching routes moves the route's apps to Through VPN, and that is saved, not just shown.
+            if (ProfileStore.LoadPreferences().DirectAppAdapters?.ContainsKey(selected) == true)
+                throw new InvalidOperationException("Switching routes must save that the route's apps go through the VPN.");
+            // A change to the VPN apps changes what a connected tunnel was started with, so it would reconnect.
+            string setupBefore = window.VpnSignature();
+            window.checkedApps.Remove(selected);
+            if (window.VpnSignature() == setupBefore)
+                throw new InvalidOperationException("Switching an app off while connected must be picked up by the tunnel.");
+            window.checkedApps.Add(selected);
+            if (window.VpnSignature() != setupBefore)
+                throw new InvalidOperationException("The connected setup signature must be stable.");
             var inspection = await window.ReadAppRoutingReport();
             if (!inspection.Contains("fixture.exe · Through VPN · Preferred route") || inspection.Contains("fixture.exe · Direct"))
                 throw new InvalidOperationException("The routing inspector must report a Through VPN app as using the VPN route.");
@@ -190,6 +201,17 @@ public sealed partial class MainWindow
                 throw new InvalidOperationException("Adapter rules must pause while Entire PC is on.");
             window.Scope.SelectedIndex = scopeBefore;
             window.Refresh();
+            // The default adapter is saved the moment it changes, so it cannot silently fail to stick.
+            var fallbackChoices = (IEnumerable<WindowsAdapterChoice>)window.WindowsFallbackAdapter.ItemsSource;
+            window.WindowsFallbackAdapter.SelectedItem = fallbackChoices.First(item => item.Id.Length == 0);
+            if (ProfileStore.LoadPreferences().DirectFallbackAdapter is not null)
+                throw new InvalidOperationException("Choosing Follow Windows must clear the saved default adapter.");
+            window.WindowsFallbackAdapter.SelectedItem = fallbackChoices.First(item => item.Id == "fixture-fallback");
+            if (ProfileStore.LoadPreferences().DirectFallbackAdapter != "fixture-fallback")
+                throw new InvalidOperationException("The default adapter must be saved as soon as it is chosen.");
+            // Closing the window sends the app to the tray by default, and the option is saved with the other settings.
+            if (!window.preferences.CloseToTray || window.settings is null || !window.settings.CloseTray.IsOn)
+                throw new InvalidOperationException("Close to tray must be on by default and shown in Settings.");
             // A catalog game becomes one group, even when none of its executables exist yet.
             int standalone = window.AppRows.Children.Count;
             window.AddCatalogGroup("Example game", [], ["Game.exe", "Launcher.exe", "Helper.exe"]);
@@ -213,6 +235,21 @@ public sealed partial class MainWindow
             window.RemoveGroup(gameGroup);
             if (window.groups.Count != 0 || window.apps.Contains(@"C:\Games\Game.exe") || window.AppRows.Children.Count != standalone)
                 throw new InvalidOperationException("Removing a group must remove its members too.");
+            // Generic names (Update.exe) only count inside the group's own folders, and are never handed to WireSock by name.
+            var ownRoot = Directory.CreateDirectory(Path.Combine(directory.FullName, "a", "b", "c", "Foo", "bin")).FullName;
+            string ownApp = Path.Combine(ownRoot, "Foo.exe");
+            string[] related = [ownApp];
+            string ownUpdate = Path.Combine(ownRoot, "Update.exe");
+            string otherUpdate = Path.Combine(directory.FullName, "elsewhere", "Slack", "Update.exe");
+            string distinctive = Path.Combine(directory.FullName, "elsewhere", "Shipping-Win64.exe");
+            var trusted = MainWindow.TrustedRunning([ownUpdate, otherUpdate, distinctive], ["Update.exe", "Shipping-Win64.exe"], related, "Foo");
+            if (!MainWindow.IsGenericName("Update.exe") || MainWindow.IsGenericName("Shipping-Win64.exe") ||
+                !trusted.Contains(ownUpdate) || trusted.Contains(otherUpdate) || !trusted.Contains(distinctive))
+                throw new InvalidOperationException("Running programs must match waiting names only inside the group's folders when the name is generic.");
+            window.AddCatalogGroup("Squirrel app", [], ["Update.exe", "Real.exe"]);
+            if (window.VpnTargets().Contains("Update.exe") || !window.VpnTargets().Contains("Real.exe"))
+                throw new InvalidOperationException("A generic name must never be passed to the tunnel by name.");
+            window.RemoveGroup(window.groups.Single(group => group.Name == "Squirrel app"));
             File.WriteAllText(Path.Combine(directory.FullName, "preferences.dat"), "unreadable fixture");
             var recovery = new MainWindow(preview: false, verifyStartup: true);
             try

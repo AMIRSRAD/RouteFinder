@@ -55,7 +55,7 @@ internal static class ProfileStore
         bool RecoverStoppedTunnel = false, string[]? UncheckedApplications = null, bool BlockOtherApps = false,
         Dictionary<string, string>? RouteUplinks = null, Dictionary<string, string>? DirectAppAdapters = null,
         string? DirectFallbackAdapter = null, Dictionary<string, string>? AppVpnRoutes = null,
-        List<AppRoutingProfile>? AppRoutingProfiles = null, List<AppGroup>? AppGroups = null);
+        List<AppRoutingProfile>? AppRoutingProfiles = null, List<AppGroup>? AppGroups = null, bool CloseToTray = true);
 
     /// <summary>
     /// Several executables shown as one item, such as a game and its launcher. Members are paths in the app list.

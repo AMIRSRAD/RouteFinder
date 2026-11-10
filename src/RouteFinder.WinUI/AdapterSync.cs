@@ -15,11 +15,23 @@ public sealed partial class MainWindow
     DirectAppRouting.Rule[] activeCombined = [];
     string lastAdapterSignature = "";
     bool adapterSyncRunning, adapterSyncAgain, verifying;
-    string? lastAdapterError;
+    string? lastAdapterError, failedAdapterSignature;
+    DateTime adapterRetryAfter;
     Microsoft.UI.Dispatching.DispatcherQueueTimer? adapterSyncTimer;
 
     // Entire PC and Selected apps only take over or block every app, so adapter rules stand down while they are on.
     bool AdapterRulesPaused => Scope.SelectedIndex != 0;
+
+    // Disk checks happen on every refresh, so remember each answer for a few seconds; a slow drive then cannot stall the window.
+    readonly Dictionary<string, (bool Exists, DateTime At)> existsCache = new(StringComparer.OrdinalIgnoreCase);
+
+    bool ExistsCached(string path)
+    {
+        if (existsCache.TryGetValue(path, out var hit) && DateTime.UtcNow - hit.At < TimeSpan.FromSeconds(5)) return hit.Exists;
+        bool exists = File.Exists(path);
+        existsCache[path] = (exists, DateTime.UtcNow);
+        return exists;
+    }
 
     string? DesiredFallback() =>
         windowsFallbackDraft is { } id && !preferences.PortableEngine &&
@@ -27,7 +39,7 @@ public sealed partial class MainWindow
 
     DirectAppRouting.Rule[] DesiredAssignments() => windowsAppDraft is not { } draft ? [] :
         draft.Where(rule => checkedApps.Contains(rule.Key) && rule.Value.Length > 0 && !appVpnDraft.ContainsKey(rule.Key) &&
-                File.Exists(rule.Key) && windowsAdapters.Any(adapter => adapter.Available &&
+                ExistsCached(rule.Key) && windowsAdapters.Any(adapter => adapter.Available &&
                     adapter.Id.Equals(rule.Value, StringComparison.OrdinalIgnoreCase)))
             .Select(rule => new DirectAppRouting.Rule(rule.Key, rule.Value)).ToArray();
 
@@ -54,6 +66,7 @@ public sealed partial class MainWindow
         if (preview || verifying || closing || windowsAppDraft is null) return;
         string signature = AdapterSignature();
         if (signature == lastAdapterSignature) return;
+        if (signature == failedAdapterSignature && DateTime.UtcNow < adapterRetryAfter) return;
         lastAdapterSignature = signature;
         adapterSyncTimer ??= CreateAdapterSyncTimer();
         adapterSyncTimer.Stop();
@@ -96,22 +109,29 @@ public sealed partial class MainWindow
         bool wanted = rules.Length > 0 || !AdapterRulesPaused && fallback is not null;
         if (!wanted && directRouting is null) return;
         if (wanted && directRouting is not null && SameRules(rules, activeCombined) && activeFallback == fallback) return;
+        string[] kept = [];
         try
         {
+            bool canStart = wanted && DirectAppRouting.IsSupported();
+            if (canStart)
+            {
+                using var identity = WindowsIdentity.GetCurrent();
+                canStart = new WindowsPrincipal(identity).IsInRole(WindowsBuiltInRole.Administrator);
+            }
             if (directRouting is { } running)
             {
-                await Task.Run(running.Dispose);
+                // Swapping keeps Windows' route-policy setting on, so there is no gap and no netsh churn between rule sets.
+                kept = canStart ? running.EnabledFamilies : [];
+                await Task.Run(() => running.Release(restorePolicies: !canStart));
                 directRouting = null;
                 activeFallback = null;
                 activeCombined = [];
                 activeAssignments = [];
                 activePins = [];
             }
-            if (!wanted) return;
-            using (var identity = WindowsIdentity.GetCurrent())
-                if (!new WindowsPrincipal(identity).IsInRole(WindowsBuiltInRole.Administrator)) return;
-            if (!DirectAppRouting.IsSupported()) return;
-            directRouting = await Task.Run(() => DirectAppRouting.Start(rules, fallback));
+            if (!canStart) return;
+            directRouting = await Task.Run(() => DirectAppRouting.Start(rules, fallback, kept));
+            kept = [];
             activeFallback = fallback;
             activeCombined = rules;
             activeAssignments = DesiredAssignments();
@@ -121,7 +141,15 @@ public sealed partial class MainWindow
         }
         catch (Exception error)
         {
-            // Try again on the next change; say it once so a failing rule does not repeat on every refresh.
+            // The kept setting has no owner now; turn it off so Windows is not left with it on.
+            if (kept.Length > 0)
+            {
+                try { await Task.Run(() => DirectAppRouting.RestorePolicies(kept)); }
+                catch (Exception restoreError) { AddActivity($"Could not restore Windows route policies. {restoreError.Message}"); }
+            }
+            // Retry after a pause rather than on every click; say it once.
+            failedAdapterSignature = AdapterSignature();
+            adapterRetryAfter = DateTime.UtcNow.AddSeconds(30);
             lastAdapterSignature = "";
             if (error.Message != lastAdapterError)
             {

@@ -72,8 +72,8 @@ public sealed partial class MainWindow
                 throw new InvalidOperationException("The preview did not test the EZConnect route.");
             Refresh();
             ToggleConnection(this, new RoutedEventArgs());
-            if (ConnectionTitle.Text != "Connected · preview" || LiveRtt.Text != "42 ms" || Scope.IsEnabled)
-                throw new InvalidOperationException("The connected preview did not display the active route and lock traffic scope.");
+            if (ConnectionTitle.Text != "Connected · preview" || LiveRtt.Text != "42 ms" || !Scope.IsEnabled || !AddAppsButton.IsEnabled && !preview)
+                throw new InvalidOperationException("The connected preview did not display the active route, or locked settings that stay editable while connected.");
             RecordRtt(null, 0);
             long now = System.Diagnostics.Stopwatch.GetTimestamp();
             int[] series = [62, 58, 47, 49, 43, 45, 42];
@@ -102,6 +102,21 @@ public sealed partial class MainWindow
             }
             groups.Clear();
             RenderApps();
+            // The tray menu in both system themes: it must actually change, not stay a light menu.
+            var shades = new List<int>();
+            foreach (bool darkTray in new[] { true, false })
+            {
+                ApplyTrayTheme(darkTray);
+                _ = trayMenu!.Handle;
+                trayMenu.Size = trayMenu.PreferredSize;
+                using var menuImage = new System.Drawing.Bitmap(trayMenu.Width, trayMenu.Height);
+                trayMenu.DrawToBitmap(menuImage, new System.Drawing.Rectangle(0, 0, trayMenu.Width, trayMenu.Height));
+                menuImage.Save(Path.ChangeExtension(path, null) + (darkTray ? "-tray-dark.png" : "-tray-light.png"));
+                shades.Add(menuImage.GetPixel(menuImage.Width / 2, menuImage.Height - 3).R);
+            }
+            ApplyTrayTheme();
+            if (shades[0] >= 128 || shades[1] <= 128)
+                throw new InvalidOperationException($"The tray menu did not follow the theme (dark {shades[0]}, light {shades[1]}).");
             // Light theme, for design review. The window backdrop is not captured, so stand in for light Mica.
             Root.RequestedTheme = ElementTheme.Light;
             Root.Background = new Microsoft.UI.Xaml.Media.SolidColorBrush(Windows.UI.Color.FromArgb(255, 243, 243, 243));

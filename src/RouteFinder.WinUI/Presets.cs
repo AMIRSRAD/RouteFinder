@@ -70,7 +70,7 @@ public sealed partial class MainWindow
     void UpdatePresetSection()
     {
         if (PresetPicker is null) return;
-        bool editable = !busy && !Connected && !session.NeedsCleanup && !AppRouterActive;
+        bool editable = !busy && !session.NeedsCleanup;
         var selected = SelectedPreset();
         bool available = selected is not null && PresetAvailable(selected);
         PresetApplyButton.IsEnabled = editable && available;
@@ -199,7 +199,7 @@ public sealed partial class MainWindow
 
     void ApplyPreset(ProfileStore.RoutingPreset preset)
     {
-        if (busy || Connected || session.NeedsCleanup || AppRouterActive) return;
+        if (busy || session.NeedsCleanup) return;
         var selected = preset.RouteKey.Length == 0 ? route : FindPresetRoute(preset);
         if (preset.RouteKey.Length > 0 && selected is null) return;
         var game = FindPresetGame(preset);
@@ -245,7 +245,9 @@ public sealed partial class MainWindow
         Scope.SelectedIndex = ScopeIndex(preset.EntirePc, preset.BlockOtherApps);
         SaveAppSelection();
         if (preset.IsFull) StoreWindowsAppRules();
+        else StoreRouteChoices();
         ReloadWindowsAdapters();
+        RenderApps();
         LoadSettingsFields();
         Refresh();
         Report($"Applied {preset.Name}. Review the setup, then connect.", InfoBarSeverity.Success);
