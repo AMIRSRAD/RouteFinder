@@ -100,18 +100,40 @@ public sealed class DirectAppRouting : IDisposable
             uint opened = FwpmEngineOpen0(0, 10, 0, ref session, out var engine); // RPC_C_AUTHN_WINNT
             Check(opened, "Open Windows Filtering Platform");
             routing = new DirectAppRouting(engine, policySettings);
-            Check(FwpmTransactionBegin0(engine, 0), "Begin direct routing update");
-            foreach (var rule in configured)
+            // Rules cover internet addresses only: loopback (an app's own local UI and services), LAN, link-local and
+            // multicast always follow Windows. Without this, Riot Client and similar launchers show a blank window.
+            // If this Windows build rejects address conditions, fall back to rules that rely on the loopback flag alone.
+            bool internetOnly = true;
+            for (int attempt = 0; ; attempt++)
             {
-                AddPolicy(engine, rule.Path, rule.Luid, 0, userCondition); // IPv4
-                AddPolicy(engine, rule.Path, rule.Luid, 1, userCondition); // IPv6
+                Check(FwpmTransactionBegin0(engine, 0), "Begin direct routing update");
+                try
+                {
+                    foreach (var rule in configured)
+                    {
+                        AddPolicy(engine, rule.Path, rule.Luid, 0, userCondition, internetOnly); // IPv4
+                        AddPolicy(engine, rule.Path, rule.Luid, 1, userCondition, internetOnly); // IPv6
+                    }
+                    if (fallbackLuid is ulong defaultLuid)
+                    {
+                        AddPolicy(engine, null, defaultLuid, 0, userCondition, internetOnly);
+                        AddPolicy(engine, null, defaultLuid, 1, userCondition, internetOnly);
+                    }
+                    Check(FwpmTransactionCommit0(engine), "Apply direct routing rules");
+                    break;
+                }
+                catch (Exception error) when (internetOnly && attempt == 0 && error is InvalidOperationException or System.ComponentModel.Win32Exception)
+                {
+                    FwpmTransactionAbort0(engine);
+                    DiagnosticLog.Error("WFP", "Windows rejected internet-only rules; using rules without address conditions", error);
+                    internetOnly = false;
+                }
             }
-            if (fallbackLuid is ulong defaultLuid)
-            {
-                AddPolicy(engine, null, defaultLuid, 0, userCondition);
-                AddPolicy(engine, null, defaultLuid, 1, userCondition);
-            }
-            Check(FwpmTransactionCommit0(engine), "Apply direct routing rules");
+            DiagnosticLog.Write("WFP", $"Rules cover {(internetOnly ? $"internet addresses only ({InternetV4Ranges.Length} IPv4 ranges + 2000::/3, one rule each); loopback, LAN and multicast follow Windows" : "all addresses except loopback (address conditions unsupported)")}.");
+            DiagnosticLog.Write("WFP", $"Committed {configured.Length} app rule(s)" +
+                (fallbackLuid is null ? "" : $" + catch-all for unassigned apps to {adapters[fallbackAdapterId!].Name} (LUID {fallbackLuid:X})") +
+                string.Concat(configured.Select(rule => $"\n{rule.Path} -> LUID {rule.Luid:X} ({adapters.Values.FirstOrDefault(a => LuidOf(a) == rule.Luid)?.Name ?? "?"})")) +
+                $"\nretained route-policy families: {string.Join(",", retainedFamilies ?? [])}");
             var retained = (retainedFamilies ?? []).ToHashSet(StringComparer.OrdinalIgnoreCase);
             foreach (string family in new[] { "ipv4", "ipv6" })
             {
@@ -129,34 +151,103 @@ public sealed class DirectAppRouting : IDisposable
         }
     }
 
-    private static unsafe void AddPolicy(EngineHandle engine, string? path, ulong interfaceLuid, uint ipVersion, byte[] userCondition)
+    // Private, loopback, link-local, carrier-grade NAT, multicast and reserved IPv4 space.
+    private static readonly (uint Address, int Prefix)[] LocalV4 =
+    [
+        (0x00000000, 8), (0x0A000000, 8), (0x64400000, 10), (0x7F000000, 8), (0xA9FE0000, 16),
+        (0xAC100000, 12), (0xC0A80000, 16), (0xE0000000, 3)
+    ];
+
+    /// <summary>Every IPv4 range that is not local: the complement of <see cref="LocalV4"/>, as address/prefix pairs.</summary>
+    public static readonly (uint Address, int Prefix)[] InternetV4 = Complement(0, 0).ToArray();
+
+    private static IEnumerable<(uint Address, int Prefix)> Complement(uint address, int prefix)
+    {
+        uint Mask(int bits) => bits == 0 ? 0 : uint.MaxValue << (32 - bits);
+        bool Inside(uint a, int p, uint b, int q) => q <= p && (a & Mask(q)) == (b & Mask(q)); // a/p inside b/q
+        bool Overlaps(uint a, int p, uint b, int q) => (a & Mask(Math.Min(p, q))) == (b & Mask(Math.Min(p, q)));
+        if (LocalV4.Any(local => Inside(address, prefix, local.Address, local.Prefix))) yield break;
+        if (!LocalV4.Any(local => Overlaps(address, prefix, local.Address, local.Prefix))) { yield return (address, prefix); yield break; }
+        foreach (var half in Complement(address, prefix + 1)) yield return half;
+        foreach (var half in Complement(address | (1u << (31 - prefix)), prefix + 1)) yield return half;
+    }
+
+    /// <summary>
+    /// The internet IPv4 space as a few contiguous ranges (low, high), merged from <see cref="InternetV4"/>. Windows
+    /// allows one address condition per rule, so each range becomes its own rule.
+    /// </summary>
+    public static readonly (uint Low, uint High)[] InternetV4Ranges = MergeRanges(InternetV4);
+
+    private static (uint Low, uint High)[] MergeRanges((uint Address, int Prefix)[] prefixes)
+    {
+        var merged = new List<(uint Low, uint High)>();
+        foreach (var (address, prefix) in prefixes.OrderBy(item => item.Address))
+        {
+            uint high = prefix == 0 ? uint.MaxValue : address | (uint.MaxValue >> prefix);
+            if (merged.Count > 0 && merged[^1].High != uint.MaxValue && merged[^1].High + 1 == address) merged[^1] = (merged[^1].Low, high);
+            else merged.Add((address, high));
+        }
+        return merged.ToArray();
+    }
+
+    // Adds the rules for one app (or the catch-all) and one IP version. With internetOnly, one rule per internet range,
+    // so loopback, LAN, link-local and multicast never match and always follow Windows.
+    private static unsafe void AddPolicy(EngineHandle engine, string? path, ulong interfaceLuid, uint ipVersion, byte[] userCondition,
+        bool internetOnly)
     {
         nint appId = 0;
         if (path is not null)
             Check(FwpmGetAppIdFromFileName0(path, out appId), $"Resolve {Path.GetFileName(path)}");
         try
         {
-            var setting = new PolicySetting
+            int rules = !internetOnly ? 1 : ipVersion == 0 ? InternetV4Ranges.Length : 1;
+            for (int index = 0; index < rules; index++)
             {
-                Type = 1, // FWP_NETWORK_CONNECTION_POLICY_NEXT_HOP_INTERFACE
-                Value = new Value { Type = 4, Data = (nuint)(&interfaceLuid) } // FWP_UINT64 is a pointer
-            };
-            var settings = new PolicySettings { Count = 1, Items = &setting };
-            var conditions = stackalloc Condition[3];
-            conditions[0] = new Condition { Key = AppIdKey, Value = new Value { Type = 12, Data = (nuint)appId } };
-            conditions[1] = new Condition { Key = FlagsKey, Match = 8, Value = new Value { Type = 3, Data = 1 } };
-            // FWP_MATCH_FLAGS_NONE_SET with FWP_CONDITION_FLAG_IS_LOOPBACK keeps local IPC working.
-            var context = new ProviderContext { Key = Guid.NewGuid(), Type = 13, Settings = &settings }; // FWPM_NETWORK_CONNECTION_POLICY_CONTEXT
-            fixed (char* name = "RouteFinder direct app routing")
-            fixed (byte* user = userCondition)
-            {
-                var descriptor = new Blob { Size = (uint)userCondition.Length, Data = user };
-                conditions[2] = new Condition { Key = UserIdKey, Value = new Value { Type = 14, Data = (nuint)(&descriptor) } };
-                context.Name = (nint)name;
-                // The fallback omits the app condition and ranks below explicit app assignments.
-                Check(FwpmConnectionPolicyAdd0(engine, ref context, ipVersion, path is null ? 0u : 1u,
-                    path is null ? 2u : 3u, path is null ? conditions + 1 : conditions, 0),
-                    $"Set {(ipVersion == 0 ? "IPv4" : "IPv6")} policy for {(path is null ? "unassigned apps" : Path.GetFileName(path))}");
+                var setting = new PolicySetting
+                {
+                    Type = 1, // FWP_NETWORK_CONNECTION_POLICY_NEXT_HOP_INTERFACE
+                    Value = new Value { Type = 4, Data = (nuint)(&interfaceLuid) } // FWP_UINT64 is a pointer
+                };
+                var settings = new PolicySettings { Count = 1, Items = &setting };
+                var conditions = stackalloc Condition[4];
+                conditions[0] = new Condition { Key = AppIdKey, Value = new Value { Type = 12, Data = (nuint)appId } };
+                // FWP_MATCH_FLAGS_NONE_SET with FWP_CONDITION_FLAG_IS_LOOPBACK keeps local IPC working where Windows sets it.
+                conditions[1] = new Condition { Key = FlagsKey, Match = 8, Value = new Value { Type = 3, Data = 1 } };
+                var range = stackalloc AddressRange[1];
+                var v6 = stackalloc V6AddressMask[1];
+                if (internetOnly)
+                {
+                    if (ipVersion == 0)
+                    {
+                        // FWP_MATCH_RANGE over FWP_RANGE_TYPE: low and high are FWP_UINT32 values in host byte order.
+                        range[0] = new AddressRange
+                        {
+                            Low = new Value { Type = 3, Data = InternetV4Ranges[index].Low },
+                            High = new Value { Type = 3, Data = InternetV4Ranges[index].High }
+                        };
+                        conditions[3] = new Condition { Key = RemoteAddressKey, Match = 5, Value = new Value { Type = 0x102, Data = (nuint)range } };
+                    }
+                    else
+                    {
+                        v6[0] = default;
+                        v6[0].Address[0] = 0x20; // 2000::/3, global unicast
+                        v6[0].Prefix = 3;
+                        conditions[3] = new Condition { Key = RemoteAddressKey, Value = new Value { Type = 0x101, Data = (nuint)v6 } };
+                    }
+                }
+                var context = new ProviderContext { Key = Guid.NewGuid(), Type = 13, Settings = &settings }; // FWPM_NETWORK_CONNECTION_POLICY_CONTEXT
+                fixed (char* name = "RouteFinder direct app routing")
+                fixed (byte* user = userCondition)
+                {
+                    var descriptor = new Blob { Size = (uint)userCondition.Length, Data = user };
+                    conditions[2] = new Condition { Key = UserIdKey, Value = new Value { Type = 14, Data = (nuint)(&descriptor) } };
+                    context.Name = (nint)name;
+                    // The catch-all omits the app condition and ranks below explicit app assignments.
+                    uint count = (uint)((path is null ? 2 : 3) + (internetOnly ? 1 : 0));
+                    var first = path is null ? conditions + 1 : conditions;
+                    Check(FwpmConnectionPolicyAdd0(engine, ref context, ipVersion, path is null ? 0u : 1u, count, first, 0),
+                        $"Set {(ipVersion == 0 ? "IPv4" : "IPv6")} policy for {(path is null ? "unassigned apps" : Path.GetFileName(path))}");
+                }
             }
         }
         finally { if (appId != 0) FwpmFreeMemory0(ref appId); }
@@ -171,6 +262,7 @@ public sealed class DirectAppRouting : IDisposable
     public void Release(bool restorePolicies)
     {
         if (stopped) return;
+        DiagnosticLog.Write("WFP", $"Releasing rules · restore route policies {restorePolicies} · enabled families {string.Join(",", enabledFamilies)}");
         var failures = new List<Exception>();
         // Restore route policies even when closing the filtering engine fails; a retry closes the engine again.
         try { engine.CloseChecked(); }
@@ -204,9 +296,13 @@ public sealed class DirectAppRouting : IDisposable
         if (failures.Count > 0) throw new AggregateException("Could not restore Windows route policy settings.", failures);
     }
 
+    private static ulong LuidOf(NetworkInterface adapter) =>
+        Guid.TryParse(adapter.Id, out var guid) && ConvertInterfaceGuidToLuid(guid, out ulong luid) == 0 ? luid : 0;
+
     private void EnableRoutePolicies(string family)
     {
         var before = GlobalParameters(family);
+        DiagnosticLog.Write("WFP", $"Enabling {family} routepolicies; settings before:\n{string.Join("\n", before)}");
         try { RunNetsh(family, "set", "global", "routepolicies=enabled", "store=active"); }
         catch
         {
@@ -258,6 +354,7 @@ public sealed class DirectAppRouting : IDisposable
     private static readonly Guid AppIdKey = new("d78e1e87-8644-4ea5-9437-d809ecefc971");
     private static readonly Guid UserIdKey = new("af043a0a-b34d-4f86-979c-c90371af6e66");
     private static readonly Guid FlagsKey = new("632ce23b-5167-435c-86d7-e903684aa80c");
+    private static readonly Guid RemoteAddressKey = new("b235ae9a-1d64-49b8-a44c-5ff3d9095045"); // FWPM_CONDITION_IP_REMOTE_ADDRESS
 
     [StructLayout(LayoutKind.Sequential)]
     private unsafe struct Blob { public uint Size; public byte* Data; }
@@ -265,6 +362,12 @@ public sealed class DirectAppRouting : IDisposable
     private struct Value { public uint Type; public nuint Data; }
     [StructLayout(LayoutKind.Sequential)]
     private struct Condition { public Guid Key; public uint Match; public Value Value; }
+    [StructLayout(LayoutKind.Sequential)]
+    private struct V4AddressMask { public uint Address, Mask; } // FWP_V4_ADDR_AND_MASK, host byte order
+    [StructLayout(LayoutKind.Sequential)]
+    private struct AddressRange { public Value Low, High; } // FWP_RANGE0
+    [StructLayout(LayoutKind.Sequential)]
+    private unsafe struct V6AddressMask { public fixed byte Address[16]; public byte Prefix; } // FWP_V6_ADDR_AND_MASK
     [StructLayout(LayoutKind.Sequential)]
     private struct PolicySetting { public uint Type; public Value Value; }
     [StructLayout(LayoutKind.Sequential)]
@@ -314,6 +417,8 @@ public sealed class DirectAppRouting : IDisposable
     private static extern uint FwpmTransactionBegin0(EngineHandle engine, uint flags);
     [DllImport("fwpuclnt.dll", ExactSpelling = true)]
     private static extern uint FwpmTransactionCommit0(EngineHandle engine);
+    [DllImport("fwpuclnt.dll", ExactSpelling = true)]
+    private static extern uint FwpmTransactionAbort0(EngineHandle engine);
     [DllImport("fwpuclnt.dll", CharSet = CharSet.Unicode, ExactSpelling = true)]
     private static extern uint FwpmGetAppIdFromFileName0(string path, out nint appId);
     [DllImport("fwpuclnt.dll", ExactSpelling = true)]

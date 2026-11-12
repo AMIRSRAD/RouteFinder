@@ -26,6 +26,7 @@ internal sealed class TunnelUplink(TunnelUplink.SockAddress destination, uint in
     {
         var adapter = NetworkInterface.GetAllNetworkInterfaces().FirstOrDefault(item =>
             string.Equals(item.Id, adapterId, StringComparison.OrdinalIgnoreCase));
+        DiagnosticLog.Write("UPLINK", $"Opening uplink: adapter {adapter?.Name ?? adapterId} status {adapter?.OperationalStatus.ToString() ?? "missing"} · endpoint {endpoint}");
         if (adapter?.OperationalStatus != OperationalStatus.Up)
             throw new InvalidOperationException("The saved internet adapter is unavailable. Reconnect it or choose another adapter in Route options.");
 
@@ -44,7 +45,10 @@ internal sealed class TunnelUplink(TunnelUplink.SockAddress destination, uint in
             var destination = SockAddress.From(ip);
             if (GetBestRoute2(0, index, 0, ref destination, 0, out var nextRoute, out _) != 0 ||
                 nextRoute.InterfaceIndex != index || nextRoute.Loopback != 0)
+            {
+                DiagnosticLog.Write("UPLINK", $"No usable route to {ip} on {adapter.Name}.");
                 continue;
+            }
 
             // A host route keeps the VPN endpoint on this uplink even when default-route metrics differ.
             RouteRow route = default;
@@ -56,6 +60,7 @@ internal sealed class TunnelUplink(TunnelUplink.SockAddress destination, uint in
             route.ValidLifetime = route.PreferredLifetime = RouteLifetimeSeconds;
             route.Protocol = 3; // MIB_IPPROTO_NETMGMT
             uint result = CreateIpForwardEntry2(ref route);
+            DiagnosticLog.Write("UPLINK", $"Host route {ip}/{route.PrefixLength} via {adapter.Name} (ifIndex {index}) · result {result}{(result == 5010 ? " (already existed)" : "")}");
             const uint alreadyExists = 5010;
             if (result != 0 && result != alreadyExists)
                 throw new Win32Exception((int)result, $"Windows could not route the VPN endpoint through {adapter.Name}.");
@@ -72,7 +77,11 @@ internal sealed class TunnelUplink(TunnelUplink.SockAddress destination, uint in
     {
         get
         {
-            if (GetBestInterfaceEx(ref destination, out uint best) != 0 || best != index) return false;
+            if (GetBestInterfaceEx(ref destination, out uint best) != 0 || best != index)
+            {
+                DiagnosticLog.Write("UPLINK", $"Endpoint path moved: Windows now picks ifIndex {best} instead of {adapterName} ({index}).");
+                return false;
+            }
             if (ownedRoute is not { } route || Environment.TickCount64 - renewedAt < 60_000) return true;
             // Let the route expire if RouteFinder exits before it can remove the entry.
             if (SetIpForwardEntry2(ref route) != 0) return false;
@@ -91,6 +100,7 @@ internal sealed class TunnelUplink(TunnelUplink.SockAddress destination, uint in
     {
         if (ownedRoute is not { } route) return;
         uint result = DeleteIpForwardEntry2(ref route);
+        DiagnosticLog.Write("UPLINK", $"Removed endpoint host route via {adapterName} · result {result}");
         if (result != 0 && result != 2 && result != 1168)
             throw new Win32Exception((int)result, $"Windows could not remove the temporary VPN endpoint route for {adapterName}.");
         ownedRoute = null;

@@ -48,15 +48,31 @@ The **Apps** page lists every app once. A tick box switches an app on or off wit
 
 A catalog game from EZConnect is added as one expandable group with a single switch and menu. Executables that were not found stay on the group by name and join when the app runs or its file is found. For Through VPN groups they are also handed to WireSock by name, as EZConnect does. Names used by many programs, such as `Update.exe`, only match inside the group's own folders and are never passed by name.
 
-**Home → What goes through the route** chooses **Selected apps**, **Entire PC**, or **Selected apps only** (WireSock's network lock: other apps lose network access while connected). Adapter rules pause while Entire PC or Selected apps only is on.
+**Home → What goes through the route** chooses **Selected apps**, **Entire PC**, or **Selected apps only** (WireSock's network lock: other apps lose network access while connected). In those two modes Direct apps and the default adapter pause, but VPN traffic is still kept on the tunnel's adapter: WireSock's transparent mode only captures traffic on the adapter it reaches the VPN server through, so with Entire PC every app is sent there while connecting or connected.
 
 Changes made while connected, such as apps, route, adapter, scope, or connection settings, are applied by reconnecting automatically after a short pause.
 
 ### Adapter rules
 
-Direct apps and the **Network → Default adapter** are enforced with temporary Windows Filtering Platform connection policies. Rules apply automatically a moment after any change and when RouteFinder starts; there is no apply button. They are removed when RouteFinder exits, and replaced without turning Windows' route-policy setting off in between. Fully quit and reopen an app after pinning it so existing connections are replaced.
+Direct apps and Through VPN pins are enforced with temporary Windows Filtering Platform connection policies. Rules apply automatically a moment after any change and when RouteFinder starts; there is no apply button. They are removed when RouteFinder exits, and replaced without turning Windows' route-policy setting off in between. Fully quit and reopen an app after pinning it so existing connections are replaced.
 
-The default adapter is a catch-all for apps without a rule. While it is set, RouteFinder also pins itself (which sends the tunnel traffic) and the Through VPN apps to the tunnel's adapter, so the VPN keeps working beside it. This pinning is not possible in virtual adapter mode, where the default adapter stays off. **Network → Live routing inspector** shows each app's mode and connections; in WireSock's transparent mode Windows still reports your Wi-Fi or Ethernet address for tunneled traffic, so use **Activity → Verify routing** to confirm the exit IP.
+Rules cover internet addresses only (seven IPv4 ranges plus `2000::/3`, one rule each, since Windows allows one address condition per rule). Traffic inside the PC, the local network, link-local and multicast always follow Windows, so a pinned launcher such as Riot Client can still reach its own local service and LAN devices stay reachable.
+
+RouteFinder pins itself (it sends the tunnel traffic) and the Through VPN apps to the tunnel's adapter whenever Windows would send them elsewhere: a default adapter is set, another VPN holds the route, or the route's adapter is not the one Windows prefers. This pinning is not possible in virtual adapter mode.
+
+**Network → Default adapter** is set the Windows way: RouteFinder lowers that adapter's interface metric so Windows itself prefers it for every app and service, with no rule on other apps. When it is already Windows' own choice nothing changes. The original metric comes back on **Follow Windows**, on exit, and at the next start after a crash. Turn on **Keep as Windows default** to keep the adapter as Windows' preferred adapter after RouteFinder closes; choose **Follow Windows** to undo it. Only when another VPN holds the default route with split routes, which no metric can outrank, is a catch-all rule used instead.
+
+If another VPN (for example F-Secure's, which uses a Wintun adapter) holds Windows' default route, RouteFinder keeps the tunnel and the Through VPN apps on a physical adapter. When the route's chosen adapter is offline, the tunnel and the default adapter fall back to a working physical adapter. **Network → Live routing inspector** shows each app's mode and connections; in WireSock's transparent mode Windows still reports your Wi-Fi or Ethernet address for tunneled traffic, so use **Activity → Verify routing** to confirm the exit IP.
+
+### DNS
+
+Windows resolves names for every app in one system service, so a Through VPN app's lookups do not enter the tunnel, and filtered networks answer them with a block page (for example `discord.com -> 10.10.34.36`). With **Settings → Secure DNS while connected** (on by default), RouteFinder runs a small DNS relay as SYSTEM while connected and points Windows' resolver at it with a name resolution policy. The relay answers over DNS over HTTPS (Cloudflare, then Google), rejects block-page answers, and sends local names (`.lan`, `.local`, single-label names, private reverse lookups) to the network's own DNS. RouteFinder checks a real lookup through Windows before relying on it. If the relay cannot be used, blocked names that apps actually hit are resolved securely and pinned in a marked block of the `hosts` file instead. The policy, the relay task, and the hosts block are removed on disconnect, on exit, and at the next start after a crash. The Windows DNS cache is flushed on connect and disconnect.
+
+Security suites that filter DNS can take over all port-53 traffic. **Settings → Pause F-Secure while RouteFinder runs** (off by default) stops F-Secure's services (`fsvpnsvc`, `fsvpnextsvc`, `fsnethoster`, `fshoster`) and starts the ones it stopped again when RouteFinder exits or the option is turned off. F-Secure's tamper protection can refuse this; Activity says so.
+
+### Detailed logging
+
+**Settings → Detailed logging** (off by default) writes a plain-text log to `%LOCALAPPDATA%\RouteFinder\logs`: routing decisions, adapter rules, tunnel steps and WireSock events, Windows adapter and route changes, DNS relay lookups, and every few seconds a snapshot of each program's connections with stuck connections and block-page DNS answers flagged. **Activity → Open logs** opens the folder and **Activity → Save report** includes the latest entries. Files roll over at 20 MB and the newest 15 are kept. Keys, tokens, and passwords are never written.
 
 ### Settings and presets
 

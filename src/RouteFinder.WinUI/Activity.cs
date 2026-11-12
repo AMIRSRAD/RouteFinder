@@ -106,6 +106,19 @@ public sealed partial class MainWindow
         return $"{snapshot}\n{lockStatus}\n\n" + (await Diagnostics.MeasurePing("1.1.1.1", count: 8, intervalMilliseconds: 150)).Detail;
     }
 
+    void OpenLogsClicked(object sender, RoutedEventArgs args)
+    {
+        if (preview) return;
+        try
+        {
+            Directory.CreateDirectory(LogFolder);
+            DiagnosticLog.Flush(500);
+            string target = DiagnosticLog.CurrentFile is { } file && File.Exists(file) ? $"/select,\"{file}\"" : $"\"{LogFolder}\"";
+            Process.Start(new ProcessStartInfo("explorer.exe", target) { UseShellExecute = true });
+        }
+        catch (Exception error) { Report(error.Message); }
+    }
+
     async Task SaveReport()
     {
         try
@@ -113,7 +126,11 @@ public sealed partial class MainWindow
             var picker = new FileSavePicker(AppWindow.Id) { SuggestedFileName = "RouteFinder-support" };
             picker.FileTypeChoices.Add("Text report", [".txt"]);
             if (await picker.PickSaveFileAsync() is not { } file) return;
-            await File.WriteAllLinesAsync(file.Path, SupportSnapshot());
+            lastSetupDump = "";
+            LogSetupIfChanged("Support report");
+            var log = DiagnosticLog.Tail(4000);
+            await File.WriteAllLinesAsync(file.Path, SupportSnapshot()
+                .Append("").Append($"--- Detailed log ({DiagnosticLog.CurrentFile ?? "off"}), last {log.Length} lines ---").Concat(log));
             AddActivity("Saved a support report.");
         }
         catch (Exception error) { Report(error.Message); }

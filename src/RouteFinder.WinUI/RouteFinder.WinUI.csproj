@@ -15,6 +15,7 @@
     <SelfContained>true</SelfContained>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
+    <DefineConstants>$(DefineConstants);DISABLE_XAML_GENERATED_MAIN</DefineConstants>
     <ApplicationManifest>../RouteFinder.App/app.manifest</ApplicationManifest>
   </PropertyGroup>
   <ItemGroup>

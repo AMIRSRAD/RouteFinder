@@ -23,7 +23,7 @@ public sealed partial class MainWindow
         bool entirePc = Scope.SelectedIndex == 1;
         int vpnCount = VpnTargets().Length;
         string routeName = route is { } current
-            ? current.Title + (UplinkFor(current) is { } uplink ? $" via {UplinkLabel(uplink)}" : "") : "";
+            ? current.Title + (EffectiveUplink(current) is { } uplink ? $" via {UplinkLabel(uplink)}" : "") : "";
         bool tunnelUp = Connected && !appRouterVpn;
         string apps = vpnCount == 1 ? "1 app" : $"{vpnCount} apps";
         string title, detail, button;
@@ -50,6 +50,9 @@ public sealed partial class MainWindow
             (title, detail, button, tone) = (entirePc ? $"All apps will go through {routeName}" : $"{apps} will go through {routeName}",
                 "Not connected", "Connect", "neutral");
         }
+        // Another VPN holds Windows' default route: say once that RouteFinder keeps its apps off it.
+        if (foreignVpnName is not null && route is not null && tone != "problem" && !preferences.PortableEngine)
+            detail = $"Another VPN ({foreignVpnName}) is on. VPN apps skip it.";
         VpnBarTitle.Text = UiLanguage.Text(title);
         VpnBarDetail.Text = UiLanguage.Text(detail);
         VpnBarButton.Content = UiLanguage.Text(button);

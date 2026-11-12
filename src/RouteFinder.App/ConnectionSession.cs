@@ -17,9 +17,15 @@ internal sealed class ConnectionSession(EzConnectClient client, Func<string, str
     public bool HasTunnel => tunnel != null;
     public bool TunnelIsActive => tunnel?.IsActive == true;
     public bool HasSelectedUplink => tunnel?.UplinkName is not null;
+    public string? UplinkName => tunnel?.UplinkName;
+    public (long Sent, long Received) TakeDataEventCounts() => tunnel?.TakeDataEventCounts() ?? (0, 0);
     public bool UplinkIsCurrent => tunnel?.UplinkIsCurrent ?? true;
     public bool PeerResponseObserved => tunnel?.HandshakeResponseObserved == true;
     public string? ActiveMtu { get; private set; }
+    /// <summary>DNS servers of the running tunnel's profile.</summary>
+    public string? ActiveDns { get; private set; }
+    /// <summary>Runs before a tunnel is taken down, so the app can restore anything that depends on it.</summary>
+    public Func<Task>? BeforeTunnelStops { get; set; }
     public string? ActiveKeepalive { get; private set; }
     public string[] ActiveRoutingDetails { get; private set; } = [];
     public string? ActiveProxyStatus => tunnel?.ProxyStatus;
@@ -173,6 +179,7 @@ internal sealed class ConnectionSession(EzConnectClient client, Func<string, str
                 allApplications: entirePc, uplinkAdapterId: uplinkAdapterId));
             tunnel = owned;
             ActiveMtu = profile.GetInterface("MTU");
+            ActiveDns = profile.GetInterface("DNS");
             ActiveKeepalive = profile.GetPeer("PersistentKeepalive");
             ActiveRoutingDetails =
             [
@@ -551,9 +558,15 @@ internal sealed class ConnectionSession(EzConnectClient client, Func<string, str
     public async Task DisconnectAsync()
     {
         Exception? localFailure = null;
+        if (tunnel is not null && BeforeTunnelStops is { } before)
+        {
+            try { await before(); }
+            catch (Exception error) { Diagnostic?.Invoke($"Pre-disconnect cleanup failed. {error.Message}"); }
+        }
         if (tunnel is { } owned)
         {
             tunnel = null;
+            ActiveDns = null;
             ActiveMtu = ActiveKeepalive = null;
             ActiveRoutingDetails = [];
             try { await Task.Run(owned.Dispose); }

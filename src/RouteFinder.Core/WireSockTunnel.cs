@@ -85,6 +85,10 @@ public sealed class WireSockTunnel : IDisposable
                     if (value.Type == 4) Interlocked.Exchange(ref lastTunnelError, value.Status);
                     if (value.Type == 0) Interlocked.Increment(ref handshakeAttempts);
                     if (value.Type == 1) Volatile.Write(ref handshakeResponseObserved, 1);
+                    // Data events arrive for every packet batch; count them instead of logging each one.
+                    if (value.Type == 2) Interlocked.Increment(ref dataSentEvents);
+                    else if (value.Type == 3) Interlocked.Increment(ref dataReceivedEvents);
+                    else DiagnosticLog.Write("WS-EVENT", $"{EventName(value.Type)} · status 0x{value.Status:X8} · data {value.Data}");
                     try { TunnelEvent?.Invoke(value.Type, value.Status); }
                     catch { /* Keep exceptions inside the managed callback. */ }
                 };
@@ -107,6 +111,7 @@ public sealed class WireSockTunnel : IDisposable
                     line = Regex.Replace(line, @"(?i)(PrivateKey|PresharedKey|password|username)\s*[:=]\s*\S+", "$1=[redacted]");
                     line = Regex.Replace(line, @"(?<![A-Za-z0-9+/])[A-Za-z0-9+/]{43}=(?![A-Za-z0-9+/])", "[key redacted]");
                     string safe = line;
+                    DiagnosticLog.Write("WIRESOCK", safe);
                     ThreadPool.QueueUserWorkItem(_ => { try { Log?.Invoke(safe); } catch { /* Exceptions must never cross the native boundary. */ } });
                 }
                 catch { /* Exceptions must never cross the native callback boundary. */ }
@@ -145,6 +150,13 @@ public sealed class WireSockTunnel : IDisposable
         string allowedApps = FormatAppList(apps, sdkFileVersion, forceComma, forcePipe);
         string disallowedApps = FormatAppList(profile.GetInterface("DisallowedApps")
             .Split('|', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries), sdkFileVersion, forceComma, forcePipe);
+        DiagnosticLog.Write("TUNNEL", $"Connect requested · backend {backendPrefix} · SDK {sdkFileVersion}\n" +
+            $"apps ({apps.Length}): {(apps.Length == 0 ? "(none)" : string.Join(" | ", apps))}\n" +
+            $"allApplications={allApplications} networkLock={networkLock} uplinkAdapterId={uplinkAdapterId ?? "(automatic)"}\n" +
+            $"endpoint={profile.Endpoint} AllowedIPs={profile.GetPeer("AllowedIPs")} Address={profile.GetInterface("Address")}\n" +
+            $"DNS={profile.GetInterface("DNS")} MTU={profile.GetInterface("MTU")} keepalive={profile.GetPeer("PersistentKeepalive")}\n" +
+            $"DisallowedApps={profile.GetInterface("DisallowedApps")} IgnoredIPs={profile.GetInterface("IgnoredIPs")} DisallowedIPs={profile.GetInterface("DisallowedIPs")}\n" +
+            $"SOCKS5 proxy={(profile.GetInterface("Socks5Proxy").Length > 0 ? "set" : "none")} · app list sent as: {allowedApps}");
         if (uplinkAdapterId is not null && profile.GetInterface("Socks5Proxy").Length > 0)
             throw new InvalidOperationException("Choose Automatic internet adapter for a route that uses a SOCKS5 proxy.");
         lock (gate)
@@ -158,6 +170,8 @@ public sealed class WireSockTunnel : IDisposable
             try
             {
                 if (uplinkAdapterId is not null) uplink = TunnelUplink.Open(uplinkAdapterId, profile.Endpoint);
+                DiagnosticLog.Write("TUNNEL", uplink is null ? $"No uplink route; Windows picks the path to {profile.Endpoint}."
+                    : $"Endpoint pinned: {uplink.Endpoint} via {uplink.AdapterName}.");
                 if (profile.GetPeer("AllowedIPs").Split(',').Any(value => value.Trim() == "::/0") &&
                     setGlobalOption("EnableIPv6", "1") == 0)
                     Log?.Invoke("WireSock declined its optional IPv6 global setting; continuing with the profile's advertised routes.");
@@ -199,10 +213,12 @@ public sealed class WireSockTunnel : IDisposable
                 }
                 if (startTunnel(handle) == 0) throw NativeFailure("Start tunnel");
                 uplink?.Verify();
+                DiagnosticLog.Write("TUNNEL", $"Tunnel started{(networkLock ? " with network lock" : "")}.");
                 // An active interface is not proof of a successful peer handshake. Inspect GetState()/traffic.
             }
             catch (Exception startupError)
             {
+                DiagnosticLog.Error("TUNNEL", "Tunnel start failed", startupError);
                 try { StopInternal(); }
                 catch (Exception cleanupError) { throw new AggregateException("Tunnel startup and cleanup failed.", startupError, cleanupError); }
                 throw;
@@ -224,6 +240,7 @@ public sealed class WireSockTunnel : IDisposable
     public void Stop() { lock (gate) { CheckDisposed(); StopInternal(); } }
     private void StopInternal()
     {
+        if (handle != 0 || uplink is not null) DiagnosticLog.Write("TUNNEL", "Stopping tunnel.");
         Exception? nativeFailure = null;
         try { StopNativeTunnel(); }
         catch (Exception error) { nativeFailure = error; }
@@ -361,6 +378,21 @@ public sealed class WireSockTunnel : IDisposable
         allocatedStrings.Add((pointer, checked((value.Length + 1) * 2)));
         return pointer;
     }
+    private long dataSentEvents, dataReceivedEvents;
+
+    /// <summary>Data events since the last call (sent, received), for the periodic log snapshot.</summary>
+    public (long Sent, long Received) TakeDataEventCounts() =>
+        (Interlocked.Exchange(ref dataSentEvents, 0), Interlocked.Exchange(ref dataReceivedEvents, 0));
+
+    // wg_tunnel_event_type in the SDK header.
+    private static string EventName(uint type) => type switch
+    {
+        0 => "handshake sent", 1 => "handshake response received", 2 => "data sent", 3 => "data received",
+        4 => "TUNNEL ERROR", 5 => "network configuration changed", 6 => "connected", 7 => "disconnected",
+        8 => "SOCKS5 connected", 9 => "SOCKS5 disconnected", 10 => "SOCKS5 ERROR",
+        _ => $"unknown event {type}"
+    };
+
     private static Exception NativeFailure(string action) => new Win32Exception(Marshal.GetLastPInvokeError(), action + " failed. See the WireSock log for details.");
     private void CheckDisposed() => ObjectDisposedException.ThrowIf(disposed, this);
 

@@ -15,7 +15,7 @@ public sealed partial class MainWindow
     {
         public required InfoBar Error;
         public required ComboBox Language, WindowSize;
-        public required ToggleSwitch CloseTray, Tray, Tips, Recover, KillSwitch, BypassLan, Portable, AutoMtu, ProxyAllTraffic;
+        public required ToggleSwitch CloseTray, Tray, Tips, Recover, KillSwitch, BypassLan, Portable, AutoMtu, ProxyAllTraffic, DnsThroughVpn, PauseFSecure, DetailedLogging;
         public required NumberBox Idle, PeerTimeout, TestTimeout, Mtu, Keepalive;
         public required TextBox Bypass, Excluded, ProxyEndpoint, ProxyUser;
         public required PasswordBox ProxyPassword;
@@ -47,6 +47,8 @@ public sealed partial class MainWindow
         var killSwitch = Toggle("\uE72E", "Kill switch",
             "Block traffic outside the tunnel. With Selected apps, other apps lose network access until you disconnect.");
         var bypassLan = Toggle("\uE968", "Allow local network", "Keep printers, NAS, and other local IPv4 devices outside the tunnel.");
+        var pauseFSecure = Toggle("\uE83D", "Pause F-Secure while RouteFinder runs", "Stops F-Secure's services, whose DNS filtering and VPN break per-app routing, and starts them again when RouteFinder closes.");
+        var dnsThroughVpn = Toggle("\uE774", "Secure DNS while connected", "Look up names over encrypted DNS so filtered answers (block pages) cannot misdirect apps.");
         var idle = Number("\uE916", "Auto-disconnect delay (s)", "Seconds to wait after watched apps close", 5, 3600);
 
         Section("Advanced network");
@@ -83,6 +85,8 @@ public sealed partial class MainWindow
             host.Children.Add(button);
         }
 
+        Section("Diagnostics");
+        var detailedLogging = Toggle("\uE9F9", "Detailed logging", "Write a detailed log of routing, adapter rules, the tunnel, DNS and connections to help find problems. Open it from Activity → Open logs.");
         Section("About");
         Row("\uE946", "RouteFinder", $"Version {typeof(MainWindow).Assembly.GetName().Version}",
             new HyperlinkButton { Content = UiLanguage.Text("Release notes"), NavigateUri = new Uri("https://github.com/AMIRSRAD/RouteFinder/releases") });
@@ -90,7 +94,7 @@ public sealed partial class MainWindow
         settings = new SettingsFields
         {
             Error = error, CloseTray = closeTray, Language = language, WindowSize = size, Tray = tray, Tips = tips, Recover = recover,
-            KillSwitch = killSwitch, BypassLan = bypassLan, Portable = portable, AutoMtu = autoMtu, ProxyAllTraffic = proxyAllTraffic,
+            KillSwitch = killSwitch, BypassLan = bypassLan, DnsThroughVpn = dnsThroughVpn, PauseFSecure = pauseFSecure, DetailedLogging = detailedLogging, Portable = portable, AutoMtu = autoMtu, ProxyAllTraffic = proxyAllTraffic,
             Idle = idle, PeerTimeout = peerTimeout, TestTimeout = testTimeout, Mtu = mtu, Keepalive = keepalive, Dns = dns,
             Bypass = bypass, Excluded = excluded, ProxyEndpoint = proxyEndpoint, ProxyUser = proxyUser, ProxyPassword = proxyPassword
         };
@@ -181,6 +185,9 @@ public sealed partial class MainWindow
         f.Recover.IsOn = preferences.RecoverStoppedTunnel;
         f.KillSwitch.IsOn = preferences.KillSwitch;
         f.BypassLan.IsOn = preferences.BypassLan;
+        f.DnsThroughVpn.IsOn = preferences.DnsThroughVpn;
+        f.PauseFSecure.IsOn = preferences.PauseFSecure;
+        f.DetailedLogging.IsOn = preferences.DetailedLogging;
         f.Idle.Value = preferences.OnDemandIdleSeconds;
         f.Portable.IsOn = preferences.PortableEngine;
         f.AutoMtu.IsOn = preferences.AutoMtu;
@@ -234,7 +241,7 @@ public sealed partial class MainWindow
                 CloseToTray = f.CloseTray.IsOn, MinimizeToTray = f.Tray.IsOn, RecoverStoppedTunnel = f.Recover.IsOn, ShowTutorials = f.Tips.IsOn,
                 WindowPreset = Math.Max(f.WindowSize.SelectedIndex, 0),
                 OnDemandIdleSeconds = Number(f.Idle, "Auto-disconnect delay", 5, 3600)!.Value,
-                BypassLan = f.BypassLan.IsOn, DnsOverride = string.Join(",", dnsAddresses),
+                BypassLan = f.BypassLan.IsOn, DnsThroughVpn = f.DnsThroughVpn.IsOn, PauseFSecure = f.PauseFSecure.IsOn, DetailedLogging = f.DetailedLogging.IsOn, DnsOverride = string.Join(",", dnsAddresses),
                 BypassDestinations = string.Join(",", destinations.Distinct(StringComparer.OrdinalIgnoreCase)),
                 ExcludedApplications = paths.Distinct(StringComparer.OrdinalIgnoreCase).ToArray(),
                 TunnelMtu = Number(f.Mtu, "MTU", 576, 65535, optional: true),
@@ -245,7 +252,15 @@ public sealed partial class MainWindow
             };
             if (!preview) WriteStore("preferences", () => ProfileStore.SavePreferences(updated));
             bool resized = updated.WindowPreset != preferences.WindowPreset;
+            bool fsecureChanged = updated.PauseFSecure != preferences.PauseFSecure;
+            bool loggingChanged = updated.DetailedLogging != preferences.DetailedLogging;
             preferences = updated;
+            if (loggingChanged) SetDetailedLogging(updated.DetailedLogging);
+            if (fsecureChanged && !preview)
+            {
+                if (updated.PauseFSecure) _ = PauseFSecure();
+                else _ = Task.Run(ResumeFSecure);
+            }
             bool languageChanged = f.Language.SelectedIndex >= 0 && f.Language.SelectedIndex != UiLanguage.Index;
             if (languageChanged && !preview) UiLanguage.Save(f.Language.SelectedIndex);
             f.Error.IsOpen = false;
