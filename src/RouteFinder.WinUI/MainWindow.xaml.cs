@@ -56,6 +56,12 @@ public sealed partial class MainWindow : Window
         ApplyTitleBarTheme();
         Root.ActualThemeChanged += (_, _) => { ApplyTitleBarTheme(); ApplyStatusTone(); RenderApps(); };
         WatchNetworkChanges();
+        StartDiagnostics();
+        // A crash could leave an adapter metric lowered; put it back before rules are worked out.
+        RecoverDefaultAdapterMetric();
+        ApplySecuritySoftwareSetting();
+        ClearLeftoverDnsPolicy();
+        session.BeforeTunnelStops = StopDnsRelay;
         ActivityList.ItemsSource = activity;
         activity.CollectionChanged += (_, _) =>
             EmptyActivity.Visibility = activity.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
@@ -446,6 +452,8 @@ public sealed partial class MainWindow : Window
         {
             if (!session.TunnelIsActive)
             {
+                // Lookups would otherwise keep going to a relay whose tunnel is gone.
+                if (dnsPolicyActive) _ = StopDnsRelay();
                 ResetTrafficHealth();
                 string stopped = reconnectFailed ? "Reconnect failed and the tunnel is still stopped." : "WireSock reported that the tunnel stopped.";
                 if (session.ActiveTunnelError is uint errorCode) stopped += $" Error 0x{errorCode:X8}.";
@@ -521,12 +529,14 @@ public sealed partial class MainWindow : Window
             Refresh();
             return;
         }
+        DiagnosticLog.Write("CONNECT", $"Connect button · automatic {automatic} · console {console} · tunnel {session.HasTunnel} · cleanup {session.NeedsCleanup}");
         if (session.HasTunnel || session.NeedsCleanup)
         {
             if (!automatic) reconnectFailed = false;
             await Run("Disconnecting…", async () =>
             {
                 await session.DisconnectAsync();
+                FlushDnsCache("disconnected");
                 AddActivity("Disconnected.");
             });
             return;
@@ -537,6 +547,9 @@ public sealed partial class MainWindow : Window
         if (groups.Any(group => group.Pending.Count > 0)) await Run("Preparing…", () => ResolvePendingApps(disk: false));
         bool entirePc = console || Scope.SelectedIndex == 1;
         string[] paths = entirePc ? [] : VpnTargets();
+        // Windows' lookups go through a relay that the tunnel carries as one more app.
+        string? relay = UsesDnsRelay(console) ? PrepareDnsRelay() : null;
+        if (relay is not null) existsCache.Remove(relay);
         if (!entirePc && paths.Length == 0)
         {
             Report("Select at least one app before connecting.");
@@ -555,10 +568,23 @@ public sealed partial class MainWindow : Window
             Report($"Could not find {string.Join(", ", missing.Select(Path.GetFileName))}. Uncheck the missing entries and add the current executables.");
             return;
         }
+        connectingTunnel = true;
+        try
+        {
         await Run("Starting tunnel…", async () =>
         {
             // Make sure the tunnel and the VPN apps are pinned above any default adapter before the tunnel starts.
             await SyncAdapterRules();
+            string? planFallback = Scope.SelectedIndex == 0 ? activeFallback : null;
+            string? uplinkChoice = !console && !RouteNeedsAutomaticUplink(selected) && TunnelNeedsPinning(planFallback)
+                ? PinnedTunnelAdapter(planFallback) : RouteNeedsAutomaticUplink(selected) ? UplinkFor(selected) : EffectiveUplink(selected);
+            FlushDnsCache("connecting");
+            lastSetupDump = "";
+            LogSetupIfChanged("Connecting");
+            DiagnosticLog.Write("CONNECT", $"Connecting {selected.Title} · entire PC {entirePc} · network lock {UseNetworkLock(console)} · targets {paths.Length}" +
+                $"\nuplink decision: chosen {AdapterName(UplinkFor(selected))} · effective {AdapterName(EffectiveUplink(selected))} · active default {AdapterName(activeFallback)}" +
+                $" · pinning needed {TunnelNeedsPinning(activeFallback)} · SOCKS5 {RouteNeedsAutomaticUplink(selected)} -> using {AdapterName(uplinkChoice)}" +
+                $"\ncatalog bypass IPs {gameIps.Length} · domains {gameDomains.Length}");
             var local = selected.Profile is { } profile ? TunnelProfile.Parse(profile.Configuration, profile.Name) : null;
             var bypass = preferences.BypassDestinations.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
             var domains = bypass.Where(value => Uri.CheckHostName(value) == UriHostNameType.Dns).ToArray();
@@ -569,7 +595,9 @@ public sealed partial class MainWindow : Window
                 bypassLan: preferences.BypassLan,
                 keepaliveSeconds: preferences.KeepaliveSeconds, excludedApplications: preferences.ExcludedApplications,
                 tunnelMtu: preferences.TunnelMtu, socksProxyOverride: ConfiguredProxy, blockOtherApps: !console && BlocksOtherApps,
-                uplinkAdapterId: activeFallback is not null && !console ? PinnedTunnelAdapter(activeFallback) : UplinkFor(selected));
+                uplinkAdapterId: uplinkChoice);
+            DiagnosticLog.Write("CONNECT", $"Connected · endpoint {connectedEndpoint} · uplink in use {session.UplinkName ?? "Windows default"} · tunnel DNS {session.ActiveDns}");
+            if (relay is not null) await StartDnsRelay(session.ActiveDns);
             connectedAt = DateTimeOffset.UtcNow;
             reconnectFailed = false;
             if (!console) RememberConnectedSetup();
@@ -585,6 +613,12 @@ public sealed partial class MainWindow : Window
             }
             AddActivity($"Started tunnel for {selected.Title}.");
         });
+        }
+        finally
+        {
+            connectingTunnel = false;
+            QueueAdapterSync();
+        }
     }
 
     ProxyOverride? ConfiguredProxy => preferences.SocksProxyCredentials ?? (string.IsNullOrWhiteSpace(preferences.SocksProxyOverride)
@@ -607,8 +641,13 @@ public sealed partial class MainWindow : Window
         ConnectionDetail.Text = "";
         UpdateBusyStrip();
         Refresh();
+        DiagnosticLog.Write("ACTION", $"Start: {message}");
         try { await operation(); }
-        catch (Exception error) { Report(error.Message); }
+        catch (Exception error)
+        {
+            DiagnosticLog.Error("ACTION", $"Failed: {message}", error);
+            Report(error.Message);
+        }
         finally
         {
             busy = false;
@@ -659,6 +698,8 @@ public sealed partial class MainWindow : Window
         }
         if (session.HasTunnel || session.NeedsCleanup) return;
         if (appSelectionSave?.IsRunning == true) SavePreferences();
+        await Task.Run(RestoreDefaultAdapterMetricOnExit);
+        await Task.Run(ResumeFSecure);
         if (directRouting is { } routing)
         {
             try { routing.Dispose(); }
@@ -680,6 +721,7 @@ public sealed partial class MainWindow : Window
 
     void AddActivity(string message)
     {
+        DiagnosticLog.Write("UI", message);
         activity.Insert(0, $"{DateTime.Now:t}  ·  {message}");
         if (activity.Count > 100) activity.RemoveAt(activity.Count - 1);
     }

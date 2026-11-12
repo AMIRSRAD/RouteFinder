@@ -92,6 +92,23 @@ Check("reject relative app paths before native handle creation", () =>
     catch (ArgumentException) { Require(!tunnel.IsActive, "Native handle should not be active."); return; }
     throw new Exception("Relative application path accepted.");
 });
+Check("adapter rules cover internet addresses only", () =>
+{
+    static uint V4(string text) => System.Buffers.Binary.BinaryPrimitives.ReadUInt32BigEndian(System.Net.IPAddress.Parse(text).GetAddressBytes());
+    static bool Covered(string text) => DirectAppRouting.InternetV4.Any(range =>
+        (V4(text) & (range.Prefix == 0 ? 0 : uint.MaxValue << (32 - range.Prefix))) == range.Address);
+    foreach (string local in new[] { "127.0.0.1", "127.0.0.53", "10.10.34.36", "192.168.1.1", "172.20.11.11", "169.254.1.1", "100.64.0.1", "224.0.0.251", "255.255.255.255", "0.0.0.0" })
+        Require(!Covered(local), $"{local} is local and must follow Windows.");
+    foreach (string internet in new[] { "1.1.1.1", "8.8.8.8", "31.7.78.86", "149.154.167.91", "104.16.120.50", "172.15.255.255", "172.32.0.1", "223.255.255.255", "100.63.255.255", "100.128.0.1" })
+        Require(Covered(internet), $"{internet} is an internet address and must be covered.");
+    foreach (string local in new[] { "127.0.0.1", "10.10.34.36", "192.168.1.1", "172.20.11.11", "169.254.1.1", "224.0.0.251" })
+        Require(!DirectAppRouting.InternetV4Ranges.Any(range => V4(local) >= range.Low && V4(local) <= range.High), $"{local} must be outside every rule range.");
+    foreach (string internet in new[] { "1.1.1.1", "31.7.78.86", "104.16.120.50", "172.32.0.1", "223.255.255.255" })
+        Require(DirectAppRouting.InternetV4Ranges.Any(range => V4(internet) >= range.Low && V4(internet) <= range.High), $"{internet} must be inside a rule range.");
+    Console.WriteLine($"  {DirectAppRouting.InternetV4Ranges.Length} merged IPv4 rule ranges: " + string.Join(", ", DirectAppRouting.InternetV4Ranges.Select(range =>
+        $"{new System.Net.IPAddress(System.Buffers.Binary.BinaryPrimitives.ReverseEndianness(range.Low))}-{new System.Net.IPAddress(System.Buffers.Binary.BinaryPrimitives.ReverseEndianness(range.High))}")));
+    Require(DirectAppRouting.InternetV4.Length < 64, $"The internet ranges should stay compact ({DirectAppRouting.InternetV4.Length})."); Console.WriteLine($"  {DirectAppRouting.InternetV4.Length} IPv4 internet ranges");
+});
 Check("accept bare executable names and reject paths or separators in them", () =>
 {
     Require(WireSockTunnel.IsExecutableName("Discord.exe") && WireSockTunnel.IsExecutableName("VALORANT-Win64-Shipping.exe") &&

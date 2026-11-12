@@ -13,14 +13,44 @@ namespace RouteFinder.WinUI;
 public sealed partial class MainWindow
 {
     DirectAppRouting.Rule[] activeCombined = [];
+    // True from pressing Connect until the tunnel is up or has failed.
+    bool connectingTunnel;
     string lastAdapterSignature = "";
     bool adapterSyncRunning, adapterSyncAgain, verifying;
     string? lastAdapterError, failedAdapterSignature;
     DateTime adapterRetryAfter;
     Microsoft.UI.Dispatching.DispatcherQueueTimer? adapterSyncTimer;
 
-    // Entire PC and Selected apps only take over or block every app, so adapter rules stand down while they are on.
+    // Entire PC and Selected apps only take over or block every app, so Direct apps and the default adapter stand
+    // down while they are on. Tunnel pins still apply: WireSock only captures traffic on the tunnel's adapter.
     bool AdapterRulesPaused => Scope.SelectedIndex != 0;
+
+    /// <summary>
+    /// What Windows should enforce now. Selected apps: Direct apps, the default adapter, and pins that keep RouteFinder
+    /// and Through VPN apps on the tunnel's adapter. Entire PC: while connecting or connected, every app is sent to the
+    /// tunnel's adapter (WireSock only sees that adapter). Selected apps only: the Through VPN apps are pinned to it.
+    /// </summary>
+    (DirectAppRouting.Rule[] Rules, string? CatchAll) DesiredPlan()
+    {
+        switch (Scope.SelectedIndex)
+        {
+            case 1:
+            {
+                bool tunnelWanted = session.HasTunnel || connectingTunnel;
+                string? tunnel = tunnelWanted && TunnelNeedsPinning(null) ? PinnedTunnelAdapter(null) : null;
+                return (tunnel is null ? [] : VpnPins(null, []), tunnel);
+            }
+            case 2:
+                return (VpnPins(null), null);
+            default:
+            {
+                // The default adapter itself is set through the adapter metric; the catch-all rule is only for when
+                // another VPN's split routes would outrank any metric.
+                string? fallback = DesiredFallback();
+                return (DesiredRules(fallback), DefaultNeedsCatchAll ? fallback : null);
+            }
+        }
+    }
 
     // Disk checks happen on every refresh, so remember each answer for a few seconds; a slow drive then cannot stall the window.
     readonly Dictionary<string, (bool Exists, DateTime At)> existsCache = new(StringComparer.OrdinalIgnoreCase);
@@ -33,9 +63,15 @@ public sealed partial class MainWindow
         return exists;
     }
 
-    string? DesiredFallback() =>
-        windowsFallbackDraft is { } id && !preferences.PortableEngine &&
-        windowsAdapters.Any(adapter => adapter.HasGateway && adapter.Id.Equals(id, StringComparison.OrdinalIgnoreCase)) ? id : null;
+    // The default adapter for apps without a rule. When the chosen one is offline, another working physical adapter
+    // stands in, so those apps stay direct instead of falling through to Windows' route (which may be another VPN).
+    string? DesiredFallback()
+    {
+        if (windowsFallbackDraft is not { } id || preferences.PortableEngine) return null;
+        if (windowsAdapters.Any(adapter => adapter.HasGateway && adapter.Id.Equals(id, StringComparison.OrdinalIgnoreCase))) return id;
+        return autoPhysicalUplink is { } standIn && windowsAdapters.Any(adapter => adapter.HasGateway &&
+            adapter.Id.Equals(standIn, StringComparison.OrdinalIgnoreCase)) ? standIn : null;
+    }
 
     DirectAppRouting.Rule[] DesiredAssignments() => windowsAppDraft is not { } draft ? [] :
         draft.Where(rule => checkedApps.Contains(rule.Key) && rule.Value.Length > 0 && !appVpnDraft.ContainsKey(rule.Key) &&
@@ -55,9 +91,9 @@ public sealed partial class MainWindow
 
     string AdapterSignature()
     {
-        string? fallback = DesiredFallback();
-        return AdapterRulesPaused ? "paused" : string.Join("|", DesiredRules(fallback).Select(rule => rule.Executable + ">" + rule.AdapterId)
-            .Order(StringComparer.OrdinalIgnoreCase).Append("default:" + fallback));
+        var (rules, catchAll) = DesiredPlan();
+        return $"scope{Scope.SelectedIndex}|" + string.Join("|", rules.Select(rule => rule.Executable + ">" + rule.AdapterId)
+            .Order(StringComparer.OrdinalIgnoreCase).Append("default:" + catchAll).Append("metric:" + (Scope.SelectedIndex == 0 || preferences.KeepWindowsDefault ? DesiredFallback() : null)));
     }
 
     // Called from Refresh: schedules a sync only when what is wanted has changed.
@@ -104,12 +140,14 @@ public sealed partial class MainWindow
 
     async Task ApplyAdapterRules()
     {
-        string? fallback = DesiredFallback();
-        var rules = AdapterRulesPaused ? [] : DesiredRules(fallback);
-        bool wanted = rules.Length > 0 || !AdapterRulesPaused && fallback is not null;
+        await SyncDefaultAdapterMetric(Scope.SelectedIndex == 0 || preferences.KeepWindowsDefault ? DesiredFallback() : null);
+        var (rules, fallback) = DesiredPlan();
+        bool wanted = rules.Length > 0 || fallback is not null;
         if (!wanted && directRouting is null) return;
         if (wanted && directRouting is not null && SameRules(rules, activeCombined) && activeFallback == fallback) return;
         string[] kept = [];
+        DiagnosticLog.Write("RULES", $"Applying adapter rules · wanted {wanted} · paused {AdapterRulesPaused} · default {AdapterName(fallback)} (chosen {AdapterName(windowsFallbackDraft)})" +
+            string.Concat(rules.Select(rule => $"\n  {Path.GetFileName(rule.Executable)} -> {AdapterName(rule.AdapterId)}  ({rule.Executable})")));
         try
         {
             bool canStart = wanted && DirectAppRouting.IsSupported();
@@ -134,13 +172,14 @@ public sealed partial class MainWindow
             kept = [];
             activeFallback = fallback;
             activeCombined = rules;
-            activeAssignments = DesiredAssignments();
-            activePins = VpnPins(fallback);
+            activeAssignments = AdapterRulesPaused ? [] : DesiredAssignments();
+            activePins = rules.Where(rule => !activeAssignments.Contains(rule)).ToArray();
             lastAdapterError = null;
             AddActivity($"Adapter rules applied: {rules.Length} app(s){(fallback is null ? "" : " + default adapter")}.");
         }
         catch (Exception error)
         {
+            DiagnosticLog.Error("RULES", "Adapter rules failed", error);
             // The kept setting has no owner now; turn it off so Windows is not left with it on.
             if (kept.Length > 0)
             {
@@ -171,9 +210,12 @@ public sealed partial class MainWindow
             : on ? $"Adapter rules on · {pinned} app{(pinned == 1 ? "" : "s")}" : "Adapter rules off");
         WindowsFallbackAdapter.IsEnabled = !busy && !session.NeedsCleanup;
         RefreshWindowsAdaptersButton.IsEnabled = !busy;
-        string reason = AdapterRulesPaused ? "Paused while Entire PC or Selected apps only is on."
+        KeepWindowsDefaultToggle.IsEnabled = !busy && !session.NeedsCleanup && windowsFallbackDraft is not null;
+        string reason = AdapterRulesPaused ? "Direct apps pause while Entire PC or Selected apps only is on; VPN traffic is still kept on the tunnel's adapter."
             : !windowsRoutingSupported ? "This Windows build does not support adapter rules."
-            : pinned > 0 && DesiredAssignments().Length < pinned ? "An app's file or adapter is unavailable." : "";
+            : pinned > 0 && DesiredAssignments().Length < pinned ? "An app's file or adapter is unavailable."
+            : DesiredFallback() is { } standIn && standIn != windowsFallbackDraft
+                ? $"Default adapter is offline; using {UplinkLabel(standIn)} until it is back." : "";
         ToolTipService.SetToolTip(AdapterRulesBar, reason.Length == 0 ? null : UiLanguage.Text(reason));
     }
 }

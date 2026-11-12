@@ -194,11 +194,79 @@ public sealed partial class MainWindow
                 throw new InvalidOperationException("Virtual adapter mode must not apply a default adapter.");
             window.preferences = window.preferences with { PortableEngine = false };
             window.windowsFallbackDraft = null;
+            // Another VPN holding the default route: the tunnel and VPN apps are kept on a physical adapter even
+            // without a default adapter, and its adapter is told apart from real ones.
+            if (!MainWindow.LooksLikeVpn((System.Net.NetworkInformation.NetworkInterfaceType)53, "Wintun Userspace Tunnel", "FSVpnSDK-HydraTunnel") ||
+                !MainWindow.LooksLikeVpn(System.Net.NetworkInformation.NetworkInterfaceType.Ethernet, "TAP-Windows Adapter V9", "Local Area Connection") ||
+                MainWindow.LooksLikeVpn(System.Net.NetworkInformation.NetworkInterfaceType.Ethernet, "Intel(R) Ethernet Connection", "Ethernet") ||
+                MainWindow.LooksLikeVpn(System.Net.NetworkInformation.NetworkInterfaceType.Wireless80211, "Intel(R) Wi-Fi 6 AX201", "Wi-Fi") ||
+                MainWindow.LooksLikeVpn(System.Net.NetworkInformation.NetworkInterfaceType.Ppp, "WAN Miniport (PPPOE)", "Broadband") ||
+                MainWindow.LooksLikeVpn((System.Net.NetworkInformation.NetworkInterfaceType)53, "WireSock Virtual Adapter", "WireSock"))
+                throw new InvalidOperationException("Another VPN's adapter was not told apart from physical adapters.");
+            (window.foreignVpnName, window.autoPhysicalUplink) = (null, null);
+            string? realDefault = window.windowsDefaultAdapterId;
+            // The route's adapter is the one Windows uses anyway: nothing needs pinning.
+            window.windowsDefaultAdapterId = window.PinnedTunnelAdapter(null);
+            if (window.VpnPins(null, [realApp]).Length != 0)
+                throw new InvalidOperationException("When the tunnel's adapter is Windows' own choice nothing should be pinned.");
+            // The route leaves through an adapter Windows does not prefer (Wi-Fi beside Ethernet): WireSock only captures
+            // there, so the VPN apps must be pinned to it.
+            window.windowsDefaultAdapterId = "some-other-adapter";
+            if (window.PinnedTunnelAdapter(null) is { } routeAdapter &&
+                window.VpnPins(null, [realApp]) is var otherPins && (otherPins.Length != 2 || otherPins.Any(pin => pin.AdapterId != routeAdapter)))
+                throw new InvalidOperationException("VPN apps must be pinned to the route's adapter when Windows prefers another one.");
+            window.windowsDefaultAdapterId = realDefault;
+            (window.foreignVpnName, window.autoPhysicalUplink) = ("FSVpnSDK-HydraTunnel", "fixture-physical");
+            var foreignPins = window.VpnPins(null, [realApp]);
+            if (foreignPins.Length != 2 || window.PinnedTunnelAdapter(null) is not { } kept || foreignPins.Any(pin => pin.AdapterId != kept))
+                throw new InvalidOperationException("Beside another VPN, RouteFinder and the VPN apps must be kept on a physical adapter.");
+            (window.foreignVpnName, window.autoPhysicalUplink) = (null, null);
+            // A default adapter that is offline hands over to a working physical adapter, so apps without a rule stay direct.
+            if (window.windowsAdapters.FirstOrDefault(adapter => adapter.HasGateway) is { } working)
+            {
+                (window.windowsFallbackDraft, window.autoPhysicalUplink) = ("offline-adapter", working.Id);
+                if (window.DesiredFallback() != working.Id)
+                    throw new InvalidOperationException("An offline default adapter must hand over to a working one.");
+                // The default adapter is set through the adapter metric, never a rule on every app (that blanked
+                // Riot Client's window). Only another VPN's split routes still need the catch-all rule.
+                int scope = window.Scope.SelectedIndex;
+                window.Scope.SelectedIndex = 0;
+                window.windowsFallbackDraft = working.Id;
+                if (window.DesiredPlan().CatchAll is not null)
+                    throw new InvalidOperationException("A default adapter must not put a rule on every app.");
+                window.foreignVpnName = "FSVpnSDK-HydraTunnel";
+                if (window.DesiredPlan().CatchAll != working.Id)
+                    throw new InvalidOperationException("Beside another VPN the default adapter still needs its catch-all rule.");
+                window.foreignVpnName = null;
+                window.Scope.SelectedIndex = scope;
+                (window.windowsFallbackDraft, window.autoPhysicalUplink) = (null, null);
+            }
+            // The detailed log writes the setup, adapters, routes, and every process's connections.
+            RouteFinder.Core.DiagnosticLog.Start(Path.Combine(Path.GetTempPath(), "RouteFinder-log-check-" + Environment.ProcessId));
+            window.LogSetupIfChanged("Startup check");
+            window.LogAdapters(System.Net.NetworkInformation.NetworkInterface.GetAllNetworkInterfaces(), null);
+            window.Snapshot("Tunnel stopped", new(window.apps, StringComparer.OrdinalIgnoreCase), new(StringComparer.OrdinalIgnoreCase) { "svchost.exe" }, null);
+            RouteFinder.Core.DiagnosticLog.Flush(3000);
+            string logText = string.Join(Environment.NewLine, RouteFinder.Core.DiagnosticLog.Tail(100000));
+            File.WriteAllText(report + ".log", logText);
+            foreach (string category in new[] { "SETUP", "ADAPTERS", "PATH", "ROUTES", "APPS" })
+                if (!logText.Contains(" " + category))
+                    throw new InvalidOperationException($"The detailed log has no {category} entry.");
+            if (!logText.Contains(" pid ") || !logText.Contains(" · TCP "))
+                throw new InvalidOperationException("The detailed log did not read process connections.");
             // Entire PC and Selected apps only take over every app, so adapter rules pause themselves.
             int scopeBefore = window.Scope.SelectedIndex;
             window.Scope.SelectedIndex = 1;
-            if (!window.AdapterRulesPaused || window.AdapterSignature() != "paused")
-                throw new InvalidOperationException("Adapter rules must pause while Entire PC is on.");
+            if (!window.AdapterRulesPaused || window.DesiredPlan().Rules.Any(rule => !rule.Executable.Equals(Environment.ProcessPath, StringComparison.OrdinalIgnoreCase)))
+                throw new InvalidOperationException("Direct app rules must pause while Entire PC is on.");
+            // Entire PC on a route whose adapter Windows does not prefer: while connecting, every app goes to that adapter.
+            window.connectingTunnel = true;
+            var (_, entireCatchAll) = window.DesiredPlan();
+            window.connectingTunnel = false;
+            if (window.TunnelNeedsPinning(null) && entireCatchAll != window.PinnedTunnelAdapter(null))
+                throw new InvalidOperationException("Entire PC must send every app to the tunnel's adapter.");
+            if (window.DesiredPlan().CatchAll is not null)
+                throw new InvalidOperationException("Entire PC must not force apps onto an adapter while disconnected.");
             window.Scope.SelectedIndex = scopeBefore;
             window.Refresh();
             // The default adapter is saved the moment it changes, so it cannot silently fail to stick.

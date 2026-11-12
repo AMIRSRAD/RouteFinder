@@ -23,13 +23,14 @@ public sealed partial class MainWindow
     // tunnel's adapter with app rules, which outrank the catch-all. The virtual adapter mode cannot be pinned that way.
 
     /// <summary>The adapter the tunnel leaves on while a default adapter is set: the route's choice, else the default adapter.</summary>
-    string? PinnedTunnelAdapter(string? fallback) => route is { } current && UplinkFor(current) is { } chosen ? chosen : fallback;
+    string? PinnedTunnelAdapter(string? fallback) => route is { } current && EffectiveUplink(current) is { } chosen ? chosen
+        : fallback ?? (foreignVpnName is not null ? autoPhysicalUplink : null);
 
     // App rules that keep RouteFinder (which sends the encrypted tunnel traffic) and the Through VPN apps on the
     // tunnel's adapter, so the catch-all default adapter cannot pull them away.
     DirectAppRouting.Rule[] VpnPins(string? fallback, IEnumerable<string>? vpnPaths = null)
     {
-        if (fallback is null || preferences.PortableEngine || PinnedTunnelAdapter(fallback) is not { } adapter) return [];
+        if (!TunnelNeedsPinning(fallback) || PinnedTunnelAdapter(fallback) is not { } adapter) return [];
         var paths = new List<string>();
         if (Environment.ProcessPath is { } self) paths.Add(self);
         paths.AddRange((vpnPaths ?? VpnApps()).Where(ExistsCached));
@@ -70,6 +71,9 @@ public sealed partial class MainWindow
         windowsRoutingSupported = DirectAppRouting.IsSupported();
         windowsAppDraft = new(preferences.DirectAppAdapters ?? [], StringComparer.OrdinalIgnoreCase);
         windowsFallbackDraft = preferences.DirectFallbackAdapter;
+        loadingWindowsFallback = true;
+        KeepWindowsDefaultToggle.IsOn = preferences.KeepWindowsDefault;
+        loadingWindowsFallback = false;
         appVpnDraft = new(preferences.AppVpnRoutes ?? [], StringComparer.OrdinalIgnoreCase);
         // Apps that only had an adapter rule (from the old Windows routing list) join the main list, switched on.
         foreach (string path in windowsAppDraft.Keys.Where(path => !apps.Contains(path, StringComparer.OrdinalIgnoreCase)).ToArray())
@@ -204,11 +208,15 @@ public sealed partial class MainWindow
         {
             var adapters = NetworkInterface.GetAllNetworkInterfaces();
             var defaultName = DirectAppRouting.DefaultIpv4AdapterName(adapters);
+            DetectForeignVpn(adapters, defaultName);
+            LogAdapters(adapters, defaultName);
             WindowsDefaultAdapter.Text = defaultName is null ? "Windows IPv4 default unavailable."
+                : foreignVpnName is not null ? $"Windows IPv4 default: {defaultName} (another VPN)."
                 : $"Windows IPv4 default: {defaultName}.";
             windowsAdapters = adapters
                 .Where(adapter => adapter.NetworkInterfaceType is not (NetworkInterfaceType.Loopback or NetworkInterfaceType.Tunnel) &&
-                    !adapter.Description.Contains("WireSock", StringComparison.OrdinalIgnoreCase))
+                    !adapter.Description.Contains("WireSock", StringComparison.OrdinalIgnoreCase) &&
+                    !LooksLikeVpn(adapter.NetworkInterfaceType, adapter.Description, adapter.Name))
                 .Select(adapter =>
                 {
                     bool available = DirectAppRouting.HasInternetGateway(adapter);
@@ -222,6 +230,7 @@ public sealed partial class MainWindow
         catch (NetworkInformationException error)
         {
             windowsAdapters = [];
+            foreignVpnName = autoPhysicalUplink = null;
             WindowsDefaultAdapter.Text = "Windows adapter information is unavailable.";
             Report(error.Message);
         }
@@ -245,6 +254,15 @@ public sealed partial class MainWindow
         finally { loadingWindowsFallback = false; }
         RenderApps();
         UpdateWindowsRoutingActions();
+    }
+
+    void KeepWindowsDefaultChanged(object sender, RoutedEventArgs args)
+    {
+        if (loadingWindowsFallback || preferences.KeepWindowsDefault == KeepWindowsDefaultToggle.IsOn) return;
+        preferences = preferences with { KeepWindowsDefault = KeepWindowsDefaultToggle.IsOn };
+        SavePreferences();
+        Trace("DEFAULT", $"Keep as Windows default: {KeepWindowsDefaultToggle.IsOn}.");
+        Refresh(refreshRouteBrowser: false);
     }
 
     void WindowsFallbackChanged(object sender, SelectionChangedEventArgs args)

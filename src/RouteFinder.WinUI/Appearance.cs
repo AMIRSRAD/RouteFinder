@@ -39,6 +39,7 @@ public sealed partial class MainWindow
         AddIcon(ConnectButton, "\uE7E8");
         AddIcon(CopyActivityButton, "\uE8C8");
         AddIcon(SaveReportButton, "\uE74E");
+        AddIcon(OpenLogsButton, "\uE8B7");
         AddIcon(DiagnosticsButton, "\uE9F9");
         // The round connect button stacks a large power glyph above its label.
         if (ConnectButton.Content is StackPanel connect)

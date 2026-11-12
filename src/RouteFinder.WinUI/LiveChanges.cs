@@ -1,3 +1,4 @@
+using RouteFinder.Core;
 using System.Net.NetworkInformation;
 using RouteFinder.App;
 
@@ -14,11 +15,12 @@ public sealed partial class MainWindow
 
     // Everything the running tunnel was started with. If any of it changes, the tunnel is out of date.
     string VpnSignature() => string.Join("|",
-        route?.Key ?? "", route is { } current ? UplinkFor(current) ?? "" : "", Scope.SelectedIndex, selectedGame?.Name ?? "",
+        route?.Key ?? "", route is { } current ? EffectiveUplink(current) ?? "" : "", Scope.SelectedIndex, selectedGame?.Name ?? "",
         string.Join(",", VpnTargets().Order(StringComparer.OrdinalIgnoreCase)),
-        preferences.KillSwitch, preferences.PortableEngine, preferences.AutoMtu, preferences.BypassLan, preferences.DnsOverride,
+        preferences.KillSwitch, preferences.DnsThroughVpn, preferences.PortableEngine, preferences.AutoMtu, preferences.BypassLan, preferences.DnsOverride,
         preferences.BypassDestinations, string.Join(",", preferences.ExcludedApplications ?? []), preferences.TunnelMtu,
-        preferences.KeepaliveSeconds, ConfiguredProxy?.Endpoint ?? "", ConfiguredProxy?.AllTraffic ?? false);
+        preferences.KeepaliveSeconds, ConfiguredProxy?.Endpoint ?? "", ConfiguredProxy?.AllTraffic ?? false,
+        foreignVpnName is not null ? autoPhysicalUplink ?? "" : "");
 
     void RememberConnectedSetup() => connectedSignature = VpnSignature();
 
@@ -36,6 +38,7 @@ public sealed partial class MainWindow
             reconnectTimer.Tick += async (_, _) =>
             {
                 if (busy || closing || !session.HasTunnel || connectedSignature is null || VpnSignature() == connectedSignature) return;
+                DiagnosticLog.Write("LIVE", $"Setup changed while connected; reconnecting.\nwas: {connectedSignature}\nnow: {VpnSignature()}");
                 AddActivity("Applying your changes to the connected VPN.");
                 await Reconnect();
             };
@@ -60,6 +63,8 @@ public sealed partial class MainWindow
     void OnSessionEnding(object? sender, Microsoft.Win32.SessionEndingEventArgs args)
     {
         closing = true;
+        try { RestoreDefaultAdapterMetricOnExit(); } catch (Exception) { }
+        try { ResumeFSecure(); } catch (Exception) { }
         try { directRouting?.Dispose(); }
         catch (Exception) { /* Windows removes dynamic rules when the process ends. */ }
         DispatcherQueue.TryEnqueue(Close);
@@ -67,6 +72,7 @@ public sealed partial class MainWindow
 
     void OnNetworkAddressChanged(object? sender, EventArgs args) => DispatcherQueue.TryEnqueue(() =>
     {
+        DiagnosticLog.Write("NET", "Windows reported a network address change.");
         if (closing || preview || verifying) return;
         if (adapterChangeTimer is null)
         {
