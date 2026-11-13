@@ -6,6 +6,7 @@ RequestExecutionLevel admin
 !include "MUI2.nsh"
 !include "FileFunc.nsh"
 !define UninstallKey "Software\Microsoft\Windows\CurrentVersion\Uninstall\RouteFinder"
+!define StartupTask "RouteFinder startup"
 !ifdef AppDirectory
     !define InstalledApp "app\RouteFinder.exe"
     !define Payload "app"
@@ -24,10 +25,23 @@ InstallDir "$PROGRAMFILES64\RouteFinder"
 !insertmacro MUI_PAGE_WELCOME
 !insertmacro MUI_PAGE_DIRECTORY
 !insertmacro MUI_PAGE_INSTFILES
+; "Start with Windows" is offered on the last page, off by default. It registers a logon task that runs RouteFinder
+; elevated in the tray (no UAC prompt at every sign-in). The checkbox only appears in interactive installs.
+!define MUI_FINISHPAGE_SHOWREADME
+!define MUI_FINISHPAGE_SHOWREADME_TEXT "Start RouteFinder when Windows starts"
+!define MUI_FINISHPAGE_SHOWREADME_NOTCHECKED
+!define MUI_FINISHPAGE_SHOWREADME_FUNCTION EnableStartup
 !insertmacro MUI_PAGE_FINISH
 !insertmacro MUI_UNPAGE_CONFIRM
 !insertmacro MUI_UNPAGE_INSTFILES
 !insertmacro MUI_LANGUAGE "English"
+
+Function EnableStartup
+    ExecWait '"$INSTDIR\${InstalledApp}" --set-startup on' $0
+    ${If} $0 != 0
+        MessageBox MB_ICONEXCLAMATION|MB_OK "RouteFinder could not be added to Windows startup. You can turn on Start with Windows in RouteFinder's Settings."
+    ${EndIf}
+FunctionEnd
 
 Function .onInit
     ${GetParameters} $R1
@@ -105,6 +119,12 @@ promote:
     WriteRegStr HKLM "${UninstallKey}" "UninstallString" '$\"$INSTDIR\Uninstall.exe$\"'
     WriteRegDWORD HKLM "${UninstallKey}" "NoModify" 1
     WriteRegDWORD HKLM "${UninstallKey}" "NoRepair" 1
+    ; An update keeps Start with Windows and points the task at the new files.
+    nsExec::Exec 'schtasks.exe /Query /TN "${StartupTask}"'
+    Pop $0
+    ${If} $0 == 0
+        ExecWait '"$INSTDIR\${InstalledApp}" --set-startup on'
+    ${EndIf}
     Goto installDone
 restorePrevious:
     IfFileExists "$R0\previous" 0 stageFailed
@@ -135,8 +155,12 @@ Section "Uninstall"
         SetErrorLevel 1
         Abort
     ${EndIf}
+    nsExec::Exec 'schtasks.exe /Delete /TN "${StartupTask}" /F'
+    Pop $0
     !ifdef AppDirectory
         !include "${UninstallList}"
+        ; Created by the app at run time.
+        Delete "$INSTDIR\app\RouteFinder.DnsRelay.exe"
         RMDir "$INSTDIR\app"
     !endif
     Delete "$SMPROGRAMS\RouteFinder.lnk"

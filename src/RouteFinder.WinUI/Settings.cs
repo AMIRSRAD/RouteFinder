@@ -15,7 +15,7 @@ public sealed partial class MainWindow
     {
         public required InfoBar Error;
         public required ComboBox Language, WindowSize;
-        public required ToggleSwitch CloseTray, Tray, Tips, Recover, KillSwitch, BypassLan, Portable, AutoMtu, ProxyAllTraffic, DnsThroughVpn, PauseFSecure, DetailedLogging;
+        public required ToggleSwitch CloseTray, Tray, Tips, Recover, KillSwitch, BypassLan, Portable, AutoMtu, ProxyAllTraffic, DnsThroughVpn, PauseFSecure, DetailedLogging, StartWithWindows;
         public required NumberBox Idle, PeerTimeout, TestTimeout, Mtu, Keepalive;
         public required TextBox Bypass, Excluded, ProxyEndpoint, ProxyUser;
         public required PasswordBox ProxyPassword;
@@ -38,6 +38,7 @@ public sealed partial class MainWindow
         Row("\uF2B7", "Language", "Takes effect after you restart RouteFinder.", language);
         var size = new ComboBox { ItemsSource = WindowSizes.Select(item => $"{item.Width} × {item.Height}").ToArray(), MinWidth = 160 };
         Row("\uE740", "Window size", null, size);
+        var startWithWindows = Toggle("\uE7E8", "Start with Windows", "Start RouteFinder in the tray when you sign in, without an administrator prompt.");
         var closeTray = Toggle("\uE8A7", "Close to tray", "Closing the window keeps RouteFinder running. Quit from the tray menu with Exit.");
         var tray = Toggle("\uE8A7", "Minimize to tray while connected", "Hide to the tray when minimized.");
         var tips = Toggle("\uE82F", "Show tips", "Show a short how-to on the Home page at startup.");
@@ -94,7 +95,7 @@ public sealed partial class MainWindow
         settings = new SettingsFields
         {
             Error = error, CloseTray = closeTray, Language = language, WindowSize = size, Tray = tray, Tips = tips, Recover = recover,
-            KillSwitch = killSwitch, BypassLan = bypassLan, DnsThroughVpn = dnsThroughVpn, PauseFSecure = pauseFSecure, DetailedLogging = detailedLogging, Portable = portable, AutoMtu = autoMtu, ProxyAllTraffic = proxyAllTraffic,
+            KillSwitch = killSwitch, BypassLan = bypassLan, DnsThroughVpn = dnsThroughVpn, PauseFSecure = pauseFSecure, DetailedLogging = detailedLogging, StartWithWindows = startWithWindows, Portable = portable, AutoMtu = autoMtu, ProxyAllTraffic = proxyAllTraffic,
             Idle = idle, PeerTimeout = peerTimeout, TestTimeout = testTimeout, Mtu = mtu, Keepalive = keepalive, Dns = dns,
             Bypass = bypass, Excluded = excluded, ProxyEndpoint = proxyEndpoint, ProxyUser = proxyUser, ProxyPassword = proxyPassword
         };
@@ -188,6 +189,7 @@ public sealed partial class MainWindow
         f.DnsThroughVpn.IsOn = preferences.DnsThroughVpn;
         f.PauseFSecure.IsOn = preferences.PauseFSecure;
         f.DetailedLogging.IsOn = preferences.DetailedLogging;
+        f.StartWithWindows.IsOn = startupTaskEnabled;
         f.Idle.Value = preferences.OnDemandIdleSeconds;
         f.Portable.IsOn = preferences.PortableEngine;
         f.AutoMtu.IsOn = preferences.AutoMtu;
@@ -256,6 +258,7 @@ public sealed partial class MainWindow
             bool loggingChanged = updated.DetailedLogging != preferences.DetailedLogging;
             preferences = updated;
             if (loggingChanged) SetDetailedLogging(updated.DetailedLogging);
+            _ = ApplyStartupSetting(f.StartWithWindows.IsOn);
             if (fsecureChanged && !preview)
             {
                 if (updated.PauseFSecure) _ = PauseFSecure();
