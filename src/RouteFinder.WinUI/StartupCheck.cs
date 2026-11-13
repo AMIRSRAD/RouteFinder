@@ -254,6 +254,15 @@ public sealed partial class MainWindow
                     throw new InvalidOperationException($"The detailed log has no {category} entry.");
             if (!logText.Contains(" pid ") || !logText.Contains(" · TCP "))
                 throw new InvalidOperationException("The detailed log did not read process connections.");
+            // The Start with Windows task is valid XML that runs RouteFinder elevated in the tray at logon, with awkward characters escaped.
+            var taskXml = System.Xml.Linq.XDocument.Parse(StartupTask.BuildXml(@"C:\Program Files\Route&Finder\app\RouteFinder.exe", @"PC\user & co"));
+            System.Xml.Linq.XNamespace taskNs = "http://schemas.microsoft.com/windows/2004/02/mit/task";
+            if (taskXml.Descendants(taskNs + "Command").Single().Value != @"C:\Program Files\Route&Finder\app\RouteFinder.exe" ||
+                taskXml.Descendants(taskNs + "Arguments").Single().Value != "--startup" ||
+                taskXml.Descendants(taskNs + "RunLevel").Single().Value != "HighestAvailable" ||
+                taskXml.Descendants(taskNs + "ExecutionTimeLimit").Single().Value != "PT0S" ||
+                taskXml.Descendants(taskNs + "LogonTrigger").Count() != 1)
+                throw new InvalidOperationException("The Start with Windows task definition is wrong.");
             // Entire PC and Selected apps only take over every app, so adapter rules pause themselves.
             int scopeBefore = window.Scope.SelectedIndex;
             window.Scope.SelectedIndex = 1;

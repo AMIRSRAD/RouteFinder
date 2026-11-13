@@ -57,6 +57,7 @@ public sealed partial class MainWindow : Window
         Root.ActualThemeChanged += (_, _) => { ApplyTitleBarTheme(); ApplyStatusTone(); RenderApps(); };
         WatchNetworkChanges();
         StartDiagnostics();
+        ReadStartupTask();
         // A crash could leave an adapter metric lowered; put it back before rules are worked out.
         RecoverDefaultAdapterMetric();
         ApplySecuritySoftwareSetting();

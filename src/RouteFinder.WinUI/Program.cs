@@ -10,6 +10,16 @@ public static class Program
     [STAThread]
     static void Main(string[] args)
     {
+        // Used by the installer: --set-startup on|off. No window; the exit code is 0 on success.
+        int startup = Array.IndexOf(args, "--set-startup");
+        if (startup >= 0 && args.ElementAtOrDefault(startup + 1) is "on" or "off")
+        {
+            bool on = args[startup + 1] == "on";
+            string? failure = StartupTask.Set(on, Environment.ProcessPath);
+            if (failure is not null) Console.Error.WriteLine(failure);
+            Environment.Exit(failure is null ? 0 : 1);
+            return;
+        }
         int resolve = Array.IndexOf(args, "--dns-resolve");
         if (resolve >= 0 && args.Length > resolve + 3)
         {

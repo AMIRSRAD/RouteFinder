@@ -35,9 +35,11 @@ public sealed partial class App : Application
         string? capture = captureArgument >= 0 ? arguments.ElementAtOrDefault(captureArgument + 1) : null;
         bool preview = capture is not null || arguments.Contains("--preview");
         if (!preview && !StartNormalLaunch()) { Exit(); return; }
+        bool background = arguments.Contains(StartupTask.Argument) && !preview;
         window = new MainWindow(preview);
         window.Closed += (_, _) => instance?.Dispose();
         window.Activate();
+        if (background) window.StartInBackground();
         if (capture is not null) window.RootLoadedForCapture(capture);
     }
 
@@ -51,7 +53,7 @@ public sealed partial class App : Application
             if (!new WindowsPrincipal(identity).IsInRole(WindowsBuiltInRole.Administrator))
             {
                 var executable = Environment.ProcessPath ?? throw new InvalidOperationException("The RouteFinder executable was not found.");
-                using var elevated = Process.Start(new ProcessStartInfo(executable)
+                using var elevated = Process.Start(new ProcessStartInfo(executable, Environment.GetCommandLineArgs().Contains(StartupTask.Argument) ? StartupTask.Argument : "")
                 {
                     UseShellExecute = true,
                     Verb = "runas",

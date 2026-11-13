@@ -70,6 +70,10 @@ Windows resolves names for every app in one system service, so a Through VPN app
 
 Security suites that filter DNS can take over all port-53 traffic. **Settings → Pause F-Secure while RouteFinder runs** (off by default) stops F-Secure's services (`fsvpnsvc`, `fsvpnextsvc`, `fsnethoster`, `fshoster`) and starts the ones it stopped again when RouteFinder exits or the option is turned off. F-Secure's tamper protection can refuse this; Activity says so.
 
+### Start with Windows
+
+**Settings → Start with Windows** (off by default), or the checkbox on the installer's last page, starts RouteFinder in the tray a few seconds after you sign in. RouteFinder needs administrator rights, so instead of a startup entry that would raise a UAC prompt at every sign-in, it registers a scheduled task (`RouteFinder startup`) that runs at logon with the highest privileges and the `--startup` switch. The task has no time limit and runs on battery. Updating RouteFinder keeps the option and points the task at the new files; uninstalling removes it. `RouteFinder.exe --set-startup on|off` changes it from a command line.
+
 ### Detailed logging
 
 **Settings → Detailed logging** (off by default) writes a plain-text log to `%LOCALAPPDATA%\RouteFinder\logs`: routing decisions, adapter rules, tunnel steps and WireSock events, Windows adapter and route changes, DNS relay lookups, and every few seconds a snapshot of each program's connections with stuck connections and block-page DNS answers flagged. **Activity → Open logs** opens the folder and **Activity → Save report** includes the latest entries. Files roll over at 20 MB and the newest 15 are kept. Keys, tokens, and passwords are never written.

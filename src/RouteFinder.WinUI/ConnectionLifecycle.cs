@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using Microsoft.UI.Windowing;
+using RouteFinder.Core;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media;
@@ -103,6 +104,48 @@ public sealed partial class MainWindow
         if (shownTrayHint || tray is null) return;
         shownTrayHint = true;
         tray.ShowBalloonTip(2500, "RouteFinder", "Still running in the tray. Right-click the icon and choose Exit to quit.", Forms.ToolTipIcon.Info);
+    }
+
+    /// <summary>Started by Windows at sign-in: go straight to the tray, without the balloon hint.</summary>
+    internal void StartInBackground()
+    {
+        shownTrayHint = true;
+        DispatcherQueue.TryEnqueue(Microsoft.UI.Dispatching.DispatcherQueuePriority.Low, HideToTray);
+        DiagnosticLog.Write("START", "Started with Windows; running in the tray.");
+    }
+
+    // Whether the "start with Windows" task exists. Read in the background at startup; Settings shows and changes it.
+    bool startupTaskEnabled;
+
+    void ReadStartupTask()
+    {
+        if (preview || verifying) return;
+        _ = Task.Run(() =>
+        {
+            bool enabled = StartupTask.Exists();
+            DispatcherQueue.TryEnqueue(() =>
+            {
+                startupTaskEnabled = enabled;
+                if (settings is { } f) f.StartWithWindows.IsOn = enabled;
+            });
+        });
+    }
+
+    async Task ApplyStartupSetting(bool wanted)
+    {
+        if (preview || verifying || wanted == startupTaskEnabled) return;
+        string? failure = await Task.Run(() => StartupTask.Set(wanted));
+        if (failure is null)
+        {
+            startupTaskEnabled = wanted;
+            AddActivity(wanted ? "RouteFinder will start with Windows." : "RouteFinder will no longer start with Windows.");
+        }
+        else
+        {
+            if (settings is { } f) f.StartWithWindows.IsOn = startupTaskEnabled;
+            DiagnosticLog.Write("START", $"Could not change start with Windows: {failure}");
+            Report($"Could not change start with Windows. {failure}");
+        }
     }
 
     internal void RestoreWindow()
