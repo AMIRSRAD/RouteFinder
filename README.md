@@ -4,6 +4,20 @@ Windows x64 desktop application for routing selected applications through a Wire
 
 [Download the latest Windows x64 installer](https://github.com/AMIRSRAD/RouteFinder/releases/latest/download/RouteFinderSetup.exe). Install WireSock Secure Connect separately and exit RouteFinder before upgrading.
 
+## Screenshots
+
+The images below come from RouteFinder's preview mode, which shows sample routes and a simulated connection.
+
+| Home | Home (light theme) |
+| --- | --- |
+| ![Home: connection status and one Connect button](docs/screenshots/home.png) | ![Home in the light theme](docs/screenshots/home-light.png) |
+
+| Routes | Providers |
+| --- | --- |
+| ![Routes: searchable route library with test results](docs/screenshots/routes.png) | ![Providers: EZConnect and imported configurations](docs/screenshots/providers.png) |
+
+![Activity: log, diagnostics and the per-app routing check](docs/screenshots/activity.png)
+
 ## Updates
 
 WinUI checks the latest published GitHub release in the background at startup. Open **Settings → Maintenance → Check for updates** to check immediately. When an update is available, **Download and install** downloads the official installer, verifies its SHA-256 checksum against the release manifest, closes RouteFinder, and opens Setup. Stop active routing before installing. Existing installations from before 1.1.9 can install this release using the download link above.
