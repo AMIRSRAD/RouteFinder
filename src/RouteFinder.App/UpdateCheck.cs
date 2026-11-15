@@ -53,10 +53,11 @@ internal static class UpdateCheck
 
         using var client = new HttpClient(new HttpClientHandler { AllowAutoRedirect = false })
         {
-            Timeout = TimeSpan.FromSeconds(10),
+            Timeout = TimeSpan.FromSeconds(30),
             MaxResponseContentBufferSize = 65536
         };
-        using var feedDeadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        // Slow connections need more than 10 seconds for GitHub's redirect plus a tiny manifest.
+        using var feedDeadline = new CancellationTokenSource(TimeSpan.FromSeconds(30));
         using var feed = await OpenReleaseResponse(client, uri, HttpCompletionOption.ResponseContentRead, feedDeadline.Token);
         feed.EnsureSuccessStatusCode();
         using var manifest = JsonDocument.Parse(await feed.Content.ReadAsStringAsync(feedDeadline.Token));
@@ -89,9 +90,13 @@ internal static class UpdateCheck
     public static async Task DownloadAsync(Package package, string destination)
     {
         const long maxBytes = 512L * 1024 * 1024;
-        using var deadline = new CancellationTokenSource(TimeSpan.FromMinutes(5));
-        using var client = new HttpClient(new HttpClientHandler { AllowAutoRedirect = false });
-        using var response = await OpenReleaseResponse(client, package.Uri, HttpCompletionOption.ResponseHeadersRead, deadline.Token);
+        // The installer is about 120 MB. Give up after 30 minutes overall, or 60 seconds without any data, instead of
+        // a fixed five minutes that a slow connection cannot meet.
+        using var deadline = new CancellationTokenSource(TimeSpan.FromMinutes(30));
+        using var idle = CancellationTokenSource.CreateLinkedTokenSource(deadline.Token);
+        idle.CancelAfter(TimeSpan.FromSeconds(60));
+        using var client = new HttpClient(new HttpClientHandler { AllowAutoRedirect = false }) { Timeout = Timeout.InfiniteTimeSpan };
+        using var response = await OpenReleaseResponse(client, package.Uri, HttpCompletionOption.ResponseHeadersRead, idle.Token);
         response.EnsureSuccessStatusCode();
         if (response.Content.Headers.ContentLength > maxBytes) throw new IOException("The update exceeds the download size limit.");
 
@@ -99,18 +104,19 @@ internal static class UpdateCheck
         try
         {
             using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
-            await using var input = await response.Content.ReadAsStreamAsync(deadline.Token);
+            await using var input = await response.Content.ReadAsStreamAsync(idle.Token);
             await using (var output = new FileStream(temporary, FileMode.CreateNew, FileAccess.Write, FileShare.None, 65536, useAsync: true))
             {
                 var buffer = new byte[65536];
                 long total = 0;
                 int read;
-                while ((read = await input.ReadAsync(buffer, deadline.Token)) != 0)
+                while ((read = await input.ReadAsync(buffer, idle.Token)) != 0)
                 {
+                    idle.CancelAfter(TimeSpan.FromSeconds(60));
                     total += read;
                     if (total > maxBytes) throw new IOException("The update exceeds the download size limit.");
                     hash.AppendData(buffer, 0, read);
-                    await output.WriteAsync(buffer.AsMemory(0, read), deadline.Token);
+                    await output.WriteAsync(buffer.AsMemory(0, read), idle.Token);
                 }
             }
             if (!Convert.ToHexString(hash.GetHashAndReset()).Equals(package.Sha256, StringComparison.OrdinalIgnoreCase))

@@ -73,9 +73,13 @@ Function .onInit
             StrCpy $INSTDIR $0
         ${EndIf}
     ${EndIf}
+    ; GetOptions (no /UPDATEPID in a manual run) and ReadRegStr (no earlier install) set the error flag. Left set, the
+    ; first IfErrors in the install section would fail every fresh install with "could not install the update".
+    ClearErrors
 FunctionEnd
 
 Section "RouteFinder"
+    ClearErrors
     IfFileExists "$INSTDIR\${InstalledApp}" 0 stage
     System::Call 'kernel32::CreateFileW(w "$INSTDIR\${InstalledApp}", i 0x40000000, i 0, p 0, i 3, i 0, p 0) p .r0'
     ${If} $0 == -1
