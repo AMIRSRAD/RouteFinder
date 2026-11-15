@@ -17,9 +17,9 @@ https://github.com/AMIRSRAD/RouteFinder/releases/latest/download/manifest.json
 To prepare a GitHub release, build with its final version and versioned asset URL:
 
 ```powershell
-.\build.ps1 -Check -Installer -ReleaseVersion 1.1.9 `
-    -ReleaseBaseUrl https://github.com/AMIRSRAD/RouteFinder/releases/download/v1.1.9/ `
-    -OutputDirectory dist/release-1.1.9
+.\build.ps1 -Check -Installer -ReleaseVersion 1.1.10 `
+    -ReleaseBaseUrl https://github.com/AMIRSRAD/RouteFinder/releases/download/v1.1.10/ `
+    -OutputDirectory dist/release-1.1.10
 ```
 
 Attach both `RouteFinderSetup.exe` and `manifest.json` before publishing the release.
@@ -66,7 +66,7 @@ If another VPN (for example F-Secure's, which uses a Wintun adapter) holds Windo
 
 ### DNS
 
-Windows resolves names for every app in one system service, so a Through VPN app's lookups do not enter the tunnel, and filtered networks answer them with a block page (for example `discord.com -> 10.10.34.36`). With **Settings → Secure DNS while connected** (on by default), RouteFinder runs a small DNS relay as SYSTEM while connected and points Windows' resolver at it with a name resolution policy. The relay answers over DNS over HTTPS (Cloudflare, then Google), rejects block-page answers, and sends local names (`.lan`, `.local`, single-label names, private reverse lookups) to the network's own DNS. RouteFinder checks a real lookup through Windows before relying on it. If the relay cannot be used, blocked names that apps actually hit are resolved securely and pinned in a marked block of the `hosts` file instead. The policy, the relay task, and the hosts block are removed on disconnect, on exit, and at the next start after a crash. The Windows DNS cache is flushed on connect and disconnect.
+Windows resolves names for every app in one system service, so a Through VPN app's lookups do not enter the tunnel, and filtered networks answer them with a block page (for example `discord.com -> 10.10.34.36`). With **Settings → Secure DNS while connected** (on by default), RouteFinder runs a small DNS relay as SYSTEM while connected and points Windows' resolver at it with a name resolution policy. The relay answers over DNS over HTTPS (Cloudflare, then Google), rejects block-page answers (it recognises the `10.10.34.0/24` block page used by the filter seen so far; answers over HTTPS are correct on other networks too), and sends local names (`.lan`, `.local`, single-label names, private reverse lookups) to the network's own DNS. RouteFinder checks a real lookup through Windows before relying on it. If the relay cannot be used, names that apps actually hit and that Windows resolved to that block page are resolved securely and pinned in a marked block of the `hosts` file instead. The policy, the relay task, and the hosts block are removed on disconnect, on exit, and at the next start after a crash. The Windows DNS cache is flushed on connect and disconnect.
 
 Security suites that filter DNS can take over all port-53 traffic. **Settings → Pause F-Secure while RouteFinder runs** (off by default) stops F-Secure's services (`fsvpnsvc`, `fsvpnextsvc`, `fsnethoster`, `fshoster`) and starts the ones it stopped again when RouteFinder exits or the option is turned off. F-Secure's tamper protection can refuse this; Activity says so.
 
@@ -80,7 +80,7 @@ Security suites that filter DNS can take over all port-53 traffic. **Settings �
 
 ### Settings and presets
 
-A **preset** (Settings → Presets) saves the whole setup: route and tunnel adapter, apps with their on/off state and route menu, groups, traffic scope, default adapter, and connection settings (kill switch, MTU, keepalive, DNS, bypass list, timeouts, tray options). SOCKS5 proxy credentials, language, and window size are not stored in presets. Number settings use limited number boxes; DNS uses a provider list with primary and secondary fields.
+A **preset** (Settings → Presets) saves the whole setup: route and tunnel adapter, apps with their on/off state and route menu, groups, traffic scope, default adapter, and connection settings (kill switch, MTU, keepalive, DNS, bypass list, timeouts, tray options). SOCKS5 proxy credentials, language, window size, and the options Secure DNS, Pause F-Secure, Detailed logging, Start with Windows, and Keep as Windows default are not stored in presets. Number settings use limited number boxes; DNS uses a provider list with primary and secondary fields.
 
 Profiles are encrypted for the current Windows user in `%LOCALAPPDATA%\RouteFinder\profiles.dat`. The optional remembered sign-in stores an encrypted refresh token. Disconnecting releases the allocated service session. Saved test results, route favorites, presets, and connection settings are encrypted for the current Windows user.
 
@@ -100,13 +100,15 @@ RouteFinder 1.1.8 fixes multi-app routing with WireSock SDK 3.4.8.1 in both Tran
 
 Requires the .NET 8 SDK or newer with Windows desktop targeting support and access to the Windows App SDK NuGet packages. The build bundles its Windows App SDK and .NET runtimes.
 
+Run the script with PowerShell 7 (`pwsh`); Windows PowerShell 5.1 cannot parse it.
+
 ```powershell
-.\build.ps1 -Check
+pwsh .\build.ps1 -Check
 ```
 
 Produces a self-contained Windows x64 app folder in `dist\app`. Keep its runtime files beside the executable, or use the installer. Checks cover configuration import, routing validation, SDK binding, preview rendering, launch activation, and normal startup from isolated encrypted test data. Checks do not change network state.
 
-Run `.\build.ps1 -Installer` with NSIS 3 installed to also build `dist\RouteFinderSetup.exe`. Setup installs RouteFinder under Program Files, adds a Start menu shortcut, and registers it in Installed apps. WireSock is a separate prerequisite. Close RouteFinder before upgrading or uninstalling.
+Run `pwsh .\build.ps1 -Installer` with NSIS 3 installed to also build `dist\RouteFinderSetup.exe`. Setup installs RouteFinder under Program Files, adds Start menu and Desktop shortcuts, registers it in Installed apps, and offers **Start RouteFinder when Windows starts** (off by default) on its last page. WireSock is a separate prerequisite. Close RouteFinder before upgrading or uninstalling.
 
 For a signed release, add `-SigningThumbprint <thumbprint>` and, if needed, `-SignTool <path-to-signtool.exe>`. The build uses the specified code-signing certificate from the current user's Personal certificate store, timestamps and verifies the application and installer signatures, and reports a build failure if signing or verification fails.
 
