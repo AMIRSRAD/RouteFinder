@@ -332,4 +332,4 @@ build.ps1                   build, check, installer and release manifest
 
 ## Contributing
 
-Issues and pull requests are welcome. Please run `pwsh .\build.ps1 -Check` before opening a pull request. When reporting a problem, turn on **Settings → Detailed logging**, reproduce it, and attach the log from **Activity → Open logs** (check it first for anything you don't want to share, such as program names or addresses).
+Please run `pwsh .\build.ps1 -Check` before opening a pull request. When reporting a problem, turn on **Settings → Detailed logging**, reproduce it, and attach the log from **Activity → Open logs** (check it first for anything you don't want to share, such as program names or addresses).
